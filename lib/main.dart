@@ -1,10 +1,10 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/routes.dart';
 import 'app/theme.dart';
+import 'core/assets/asset_bootstrap.dart';
 import 'core/ffi/zyra_native.dart';
 
 Future<void> main() async {
@@ -20,6 +20,21 @@ Future<void> main() async {
     native.logVersion();
     debugPrint(
         '[Zyra] FFI bootstrap ok — zyra_hello=$hello ncnn=${native.ncnnVersion()}');
+
+    // Phase 3 detector self-test — extract the model assets to the app
+    // support dir and run one inference on a synthetic frame. Non-fatal
+    // if it fails; the UI still works and the error lands in logcat.
+    try {
+      final ModelPaths paths = await AssetBootstrap.ensureModelsExtracted();
+      final ZyraSelftestResult result = native.detectorSelftest(
+        paramPath: paths.paramPath,
+        binPath: paths.binPath,
+        useVulkan: true,
+      );
+      debugPrint('[Zyra] detector selftest ok — $result');
+    } catch (e, st) {
+      debugPrint('[Zyra] detector selftest FAILED: $e\n$st');
+    }
   } catch (e, st) {
     debugPrint('[Zyra] FFI bootstrap FAILED: $e\n$st');
   }

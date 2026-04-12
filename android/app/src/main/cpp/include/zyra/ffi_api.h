@@ -38,6 +38,27 @@ ZYRA_API void zyra_log_version(void);
 // storage).
 ZYRA_API const char* zyra_ncnn_version(void);
 
+// --- Phase 3 detector self-test -----------------------------------------
+//
+// Constructs an `NcnnYoloV8Detector`, loads the given model, and runs a
+// single inference on a synthetic grey 640×640 RGB image. On success,
+// stats are written into the optional output slots (nullable — pass NULL
+// to discard) and the function returns 0.
+//
+// Return codes:
+//    0  — ok
+//   -1  — load_param / load_model failed
+//   -2  — inference threw or failed
+//   -3  — param_path / bin_path was null
+ZYRA_API int32_t zyra_detector_selftest(const char* param_path,
+                                        const char* bin_path,
+                                        int32_t use_vulkan,
+                                        int32_t* out_detection_count,
+                                        float* out_preprocess_ms,
+                                        float* out_infer_ms,
+                                        float* out_nms_ms,
+                                        int32_t* out_vulkan_active);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

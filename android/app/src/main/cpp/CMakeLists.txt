@@ -70,6 +70,9 @@ endforeach()
 set(ZYRA_SOURCES
     src/logging.cpp
     src/ffi_api.cpp
+    src/detector.cpp
+    src/preprocess.cpp
+    src/nms.cpp
 )
 
 add_library(zyra_perception SHARED ${ZYRA_SOURCES})
@@ -90,6 +93,11 @@ target_compile_options(zyra_perception PRIVATE
     -Wall
     -Wextra
     -Wno-unused-parameter
+    # NCNN and OpenCV Mobile were built with OpenMP enabled (`__kmpc_*`,
+    # `omp_*` symbols). Clang needs `-fopenmp` so headers (if any)
+    # resolve; the link side gets `-static-openmp` so we pick up the
+    # NDK's static libomp.a instead of a runtime .so.
+    -fopenmp
 )
 
 target_link_options(zyra_perception PRIVATE
@@ -99,6 +107,9 @@ target_link_options(zyra_perception PRIVATE
     # Prevent NCNN / OpenCV static lib symbols from being re-exported from
     # libzyra_perception.so (keeps the FFI surface clean).
     -Wl,--exclude-libs,ALL
+    # Static OpenMP runtime (resolves __kmpc_* / omp_* from NCNN + OpenCV).
+    -fopenmp
+    -static-openmp
 )
 
 # Link order matters for static libs. ncnn must come before its glslang /
