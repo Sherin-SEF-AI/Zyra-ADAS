@@ -87,6 +87,20 @@ typedef struct ZyraDetection {
 // detector.cpp.
 #define ZYRA_MAX_DETECTIONS 64
 
+// Phase 6 — lane-detection output. Coords are in ORIGINAL image space,
+// same convention as ZyraDetection, so the Dart overlay can apply the
+// same sensor→display rotation it uses for bboxes.
+typedef struct ZyraLane {
+  float x1;
+  float y1;
+  float x2;
+  float y2;
+  int32_t side;        // 0 = left, 1 = right
+  float confidence;    // 0..1 — supporting-segment count, softly normalised
+} ZyraLane;
+
+#define ZYRA_MAX_LANES 8
+
 typedef struct ZyraDetectionBatch {
   uint64_t frame_id;          // monotonic, set by producer
   double timestamp_ms;        // producer wall-clock (CLOCK_MONOTONIC × 1e3)
@@ -98,8 +112,13 @@ typedef struct ZyraDetectionBatch {
   float infer_ms;
   float nms_ms;
   int32_t vulkan_active;      // 1 if inference ran on Vulkan, 0 for CPU
-  int32_t reserved;           // keeps the struct 8-byte aligned
+  int32_t reserved;           // keeps the detections[] block 8-byte aligned
   ZyraDetection detections[ZYRA_MAX_DETECTIONS];
+  // --- Phase 6 lane block (appended to preserve field offsets above). ---
+  int32_t lane_count;         // number of valid entries in `lanes`
+  float lane_ms;              // wall-clock of the lane stage (ms)
+  int32_t reserved2;          // 8-byte alignment before the lanes[] block
+  ZyraLane lanes[ZYRA_MAX_LANES];
 } ZyraDetectionBatch;
 
 // Create a new engine. Returns an opaque handle > 0 on success, or 0 on

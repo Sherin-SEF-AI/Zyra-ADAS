@@ -5,6 +5,9 @@ import 'package:ffi/ffi.dart' show calloc;
 /// Matches `ZYRA_MAX_DETECTIONS` in cpp/include/zyra/ffi_api.h.
 const int kZyraMaxDetections = 64;
 
+/// Matches `ZYRA_MAX_LANES` in cpp/include/zyra/ffi_api.h.
+const int kZyraMaxLanes = 8;
+
 /// dart:ffi struct mirroring `ZyraDetection` in cpp/include/zyra/ffi_api.h.
 /// Layout MUST stay in sync — the native code copies into this buffer by
 /// absolute offset.
@@ -19,6 +22,22 @@ final class ZyraDetectionStruct extends ffi.Struct {
   external double y2;
   @ffi.Int32()
   external int classId;
+  @ffi.Float()
+  external double confidence;
+}
+
+/// dart:ffi struct mirroring `ZyraLane` in cpp/include/zyra/ffi_api.h.
+final class ZyraLaneStruct extends ffi.Struct {
+  @ffi.Float()
+  external double x1;
+  @ffi.Float()
+  external double y1;
+  @ffi.Float()
+  external double x2;
+  @ffi.Float()
+  external double y2;
+  @ffi.Int32()
+  external int side; // 0 = left, 1 = right
   @ffi.Float()
   external double confidence;
 }
@@ -51,6 +70,16 @@ final class ZyraDetectionBatchStruct extends ffi.Struct {
   external int reserved;
   @ffi.Array(kZyraMaxDetections)
   external ffi.Array<ZyraDetectionStruct> detections;
+  // Phase 6 — lane block. Matches the tail of ZyraDetectionBatch in
+  // ffi_api.h. Must remain in this order.
+  @ffi.Int32()
+  external int laneCount;
+  @ffi.Float()
+  external double laneMs;
+  @ffi.Int32()
+  external int reserved2;
+  @ffi.Array(kZyraMaxLanes)
+  external ffi.Array<ZyraLaneStruct> lanes;
 }
 
 /// Immutable Dart-side detection. Returned by `ZyraEngine.pollDetections()`.
@@ -80,6 +109,29 @@ class ZyraDetection {
   double get area => width * height;
 }
 
+/// Immutable Dart-side lane segment. Side = 0 for left of the image center,
+/// 1 for right. Coords are in ORIGINAL (unrotated) frame space.
+class ZyraLane {
+  const ZyraLane({
+    required this.x1,
+    required this.y1,
+    required this.x2,
+    required this.y2,
+    required this.side,
+    required this.confidence,
+  });
+
+  final double x1;
+  final double y1;
+  final double x2;
+  final double y2;
+  final int side;
+  final double confidence;
+
+  bool get isLeft => side == 0;
+  bool get isRight => side == 1;
+}
+
 /// A snapshot of inference output for a single frame. Returned by
 /// `ZyraEngine.pollDetections()`.
 class ZyraBatch {
@@ -94,6 +146,8 @@ class ZyraBatch {
     required this.nmsMs,
     required this.vulkanActive,
     required this.detections,
+    required this.lanes,
+    required this.laneMs,
   });
 
   final int frameId;
@@ -106,8 +160,12 @@ class ZyraBatch {
   final double nmsMs;
   final bool vulkanActive;
   final List<ZyraDetection> detections;
+  final List<ZyraLane> lanes;
 
-  double get totalMs => preprocessMs + inferMs + nmsMs;
+  /// Wall-clock of the lane stage (classical Hough) in milliseconds.
+  final double laneMs;
+
+  double get totalMs => preprocessMs + inferMs + nmsMs + laneMs;
 }
 
 /// Allocate a batch struct buffer suitable for passing to

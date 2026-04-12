@@ -18,6 +18,7 @@ import '../../vehicle_select/application/vehicle_profile_notifier.dart';
 import '../../vehicle_select/data/vehicle_profile.dart';
 import 'widgets/detection_overlay_painter.dart';
 import 'widgets/fps_bar.dart';
+import 'widgets/lane_overlay_painter.dart';
 import 'widgets/status_bar.dart';
 
 /// Phase 5 — live camera preview + real-time YOLOv8 detection overlay.
@@ -491,6 +492,19 @@ class _LiveView extends StatelessWidget {
               fit: StackFit.expand,
               children: <Widget>[
                 CameraPreview(c),
+                // Lanes rendered under bboxes so object boxes win occlusion
+                // if they overlap the painted Hough segments.
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: LaneOverlayPainter(
+                      batch: latest,
+                      sensorWidth: preview.width,
+                      sensorHeight: preview.height,
+                      sensorOrientation: sensorOrientation,
+                      mirror: isFront,
+                    ),
+                  ),
+                ),
                 Positioned.fill(
                   child: CustomPaint(
                     painter: DetectionOverlayPainter(
@@ -528,6 +542,7 @@ class _LiveView extends StatelessWidget {
             top: false,
             child: StatusBar(
               detections: latest?.detections.length ?? 0,
+              lanes: latest?.lanes.length ?? 0,
               totalMs: latest?.totalMs ?? 0,
               inferMs: latest?.inferMs ?? 0,
             ),

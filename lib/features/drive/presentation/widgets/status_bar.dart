@@ -10,11 +10,13 @@ class StatusBar extends StatelessWidget {
   const StatusBar({
     super.key,
     required this.detections,
+    required this.lanes,
     required this.totalMs,
     required this.inferMs,
   });
 
   final int detections;
+  final int lanes;
   final double totalMs;
   final double inferMs;
 
@@ -36,7 +38,12 @@ class StatusBar extends StatelessWidget {
           Icon(Icons.adjust_rounded,
               color: Colors.white.withValues(alpha: 0.8), size: 16),
           const SizedBox(width: 6),
-          Text('$detections objects', style: mono),
+          Text('$detections obj', style: mono),
+          const SizedBox(width: 12),
+          Icon(Icons.linear_scale_rounded,
+              color: Colors.white.withValues(alpha: 0.8), size: 16),
+          const SizedBox(width: 4),
+          Text('$lanes ln', style: mono),
           const Spacer(),
           Text('infer ${inferMs.toStringAsFixed(1)}ms', style: mono),
           const SizedBox(width: 12),

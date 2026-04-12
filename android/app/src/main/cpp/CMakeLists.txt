@@ -74,6 +74,7 @@ set(ZYRA_SOURCES
     src/engine.cpp
     src/preprocess.cpp
     src/nms.cpp
+    src/lane.cpp
 )
 
 add_library(zyra_perception SHARED ${ZYRA_SOURCES})

@@ -329,6 +329,19 @@ class ZyraEngine {
       );
     });
 
+    final int lnc = b.laneCount.clamp(0, kZyraMaxLanes);
+    final List<ZyraLane> lanes = List<ZyraLane>.generate(lnc, (int i) {
+      final ZyraLaneStruct ln = b.lanes[i];
+      return ZyraLane(
+        x1: ln.x1,
+        y1: ln.y1,
+        x2: ln.x2,
+        y2: ln.y2,
+        side: ln.side,
+        confidence: ln.confidence,
+      );
+    });
+
     return ZyraBatch(
       frameId: b.frameId,
       timestampMs: b.timestampMs,
@@ -340,6 +353,8 @@ class ZyraEngine {
       nmsMs: b.nmsMs,
       vulkanActive: b.vulkanActive != 0,
       detections: dets,
+      lanes: lanes,
+      laneMs: b.laneMs,
     );
   }
 

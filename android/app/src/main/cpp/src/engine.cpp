@@ -209,6 +209,19 @@ void PerceptionEngine::worker_loop_() {
       continue;
     }
 
+    // --- Run lane detection on the (unrotated) Y plane. ------------------
+    // Uses the contiguous y_buf copy we made in submit(), so row_stride is
+    // exactly width here.
+    std::vector<Lane> lanes;
+    try {
+      lanes = lane_detector_.detect(p.y_buf.data(), p.width, p.height,
+                                    p.width);
+    } catch (...) {
+      ZYRA_LOGE("lane detector threw — emitting empty lanes for frame %llu",
+                static_cast<unsigned long long>(p.frame_id));
+      lanes.clear();
+    }
+
     // --- Publish the batch. ---------------------------------------------
     ZyraDetectionBatch batch{};
     batch.frame_id = p.frame_id;
@@ -227,6 +240,16 @@ void PerceptionEngine::worker_loop_() {
       batch.detections[i] = ZyraDetection{
           dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2,
           dets[i].class_id, dets[i].confidence,
+      };
+    }
+    const int ln = std::min<int>(static_cast<int>(lanes.size()),
+                                 ZYRA_MAX_LANES);
+    batch.lane_count = ln;
+    batch.lane_ms = lane_detector_.last_ms();
+    for (int i = 0; i < ln; ++i) {
+      batch.lanes[i] = ZyraLane{
+          lanes[i].x1, lanes[i].y1, lanes[i].x2, lanes[i].y2,
+          lanes[i].side, lanes[i].confidence,
       };
     }
 
