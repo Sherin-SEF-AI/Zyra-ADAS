@@ -1,4 +1,4 @@
-package com.zyra.mobile.zyra_mobile
+package com.zyra.mobile
 
 import io.flutter.embedding.android.FlutterActivity
 
