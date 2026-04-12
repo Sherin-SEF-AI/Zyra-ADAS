@@ -1,16 +1,37 @@
+import 'dart:async';
+import 'dart:ffi' as ffi;
+
+import 'package:camera/camera.dart';
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../app/routes.dart';
 import '../../../app/theme.dart';
+import '../../../core/ffi/zyra_detection.dart';
+import '../../../core/ffi/zyra_engine.dart';
+import '../../../core/ffi/zyra_engine_provider.dart';
 import '../../../core/permissions/permissions_service.dart';
 import '../../vehicle_select/application/vehicle_profile_notifier.dart';
 import '../../vehicle_select/data/vehicle_profile.dart';
+import 'widgets/detection_overlay_painter.dart';
+import 'widgets/fps_bar.dart';
+import 'widgets/status_bar.dart';
 
-/// Phase 1 stub — proves routing, profile persistence, and permission flow.
-/// The real camera preview + detection overlay lands in Phase 5; this screen
-/// is intentionally minimal until the native engine is online.
+/// Phase 5 — live camera preview + real-time YOLOv8 detection overlay.
+///
+/// Flow:
+///   1. Request camera + location permissions on first build.
+///   2. Once camera is granted, initialise the first back camera and start
+///      an image stream.
+///   3. Each `CameraImage` is copied into a native buffer (NV21 semi-planar)
+///      and submitted to [ZyraEngine.submitFrame]. A 33 ms polling timer
+///      drains the latest detection batch into UI state.
+///   4. [DetectionOverlayPainter] rotates bbox coords from sensor-native
+///      space into the display orientation of [CameraPreview] and draws
+///      per-class colored rectangles + labels on top.
 class DriveScreen extends ConsumerStatefulWidget {
   const DriveScreen({super.key});
 
@@ -22,59 +43,310 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     with WidgetsBindingObserver {
   static const PermissionsService _permissions = PermissionsService();
 
+  /// Minimum gap between consecutive `submitFrame` calls. The image stream
+  /// can deliver at 60 FPS on some devices — we throttle to ~30 to avoid
+  /// burning CPU on copies we'll never use. Native inference is throttled
+  /// independently by the engine's worker thread.
+  static const Duration _submitMinInterval = Duration(milliseconds: 33);
+
   DrivePermissionResult? _permissionResult;
-  bool _requesting = false;
+  bool _requestingPermissions = false;
+
+  CameraController? _controller;
+  CameraDescription? _camera;
+  bool _initialisingCamera = false;
+  Object? _cameraError;
+  bool _streamStarted = false;
+
+  Timer? _pollTimer;
+  ZyraBatch? _latest;
+  int _frameId = 0;
+  DateTime? _lastSubmit;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WakelockPlus.enable();
+    SystemChrome.setPreferredOrientations(<DeviceOrientation>[
+      DeviceOrientation.portraitUp,
+    ]);
     WidgetsBinding.instance.addPostFrameCallback((_) => _requestPermissions());
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    _stopAndDisposeCamera();
     WakelockPlus.disable();
+    SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    final CameraController? c = _controller;
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _pollTimer?.cancel();
+      if (c != null && c.value.isStreamingImages) {
+        // Best-effort stop; controller disposal happens on dispose().
+        c.stopImageStream().catchError((_) {});
+      }
+    } else if (state == AppLifecycleState.resumed) {
       _refreshPermissionStatus();
+      if (c != null && !c.value.isStreamingImages && _permissionResult?.cameraGranted == true) {
+        _attachStream(c);
+      }
     }
   }
 
+  // ---------------------------------------------------------------------------
+  //  Permissions
+  // ---------------------------------------------------------------------------
+
   Future<void> _requestPermissions() async {
-    if (_requesting) return;
-    setState(() => _requesting = true);
-    final DrivePermissionResult result =
-        await _permissions.requestDrivePermissions();
+    if (_requestingPermissions) return;
+    setState(() => _requestingPermissions = true);
+    final DrivePermissionResult r = await _permissions.requestDrivePermissions();
     if (!mounted) return;
     setState(() {
-      _permissionResult = result;
-      _requesting = false;
+      _permissionResult = r;
+      _requestingPermissions = false;
     });
+    if (r.cameraGranted && _controller == null) {
+      _initCamera();
+    }
   }
 
   Future<void> _refreshPermissionStatus() async {
-    final DrivePermissionResult result =
-        await _permissions.checkDrivePermissions();
+    final DrivePermissionResult r = await _permissions.checkDrivePermissions();
     if (!mounted) return;
-    setState(() => _permissionResult = result);
+    setState(() => _permissionResult = r);
+    if (r.cameraGranted && _controller == null && !_initialisingCamera) {
+      _initCamera();
+    }
   }
+
+  // ---------------------------------------------------------------------------
+  //  Camera lifecycle
+  // ---------------------------------------------------------------------------
+
+  Future<void> _initCamera() async {
+    if (_initialisingCamera) return;
+    _initialisingCamera = true;
+    try {
+      final List<CameraDescription> cams = await availableCameras();
+      final CameraDescription back = cams.firstWhere(
+        (CameraDescription c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cams.first,
+      );
+      _camera = back;
+
+      final CameraController c = CameraController(
+        back,
+        ResolutionPreset.high, // 720p on most devices — good balance
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.yuv420,
+      );
+      await c.initialize();
+      if (!mounted) {
+        await c.dispose();
+        return;
+      }
+      _controller = c;
+      setState(() => _cameraError = null);
+      _attachStream(c);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _cameraError = e);
+    } finally {
+      _initialisingCamera = false;
+    }
+  }
+
+  void _attachStream(CameraController c) {
+    if (_streamStarted && c.value.isStreamingImages) return;
+    _streamStarted = true;
+    c.startImageStream(_onCameraImage).catchError((Object e) {
+      if (mounted) setState(() => _cameraError = e);
+    });
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
+      final ZyraEngine? eng = ref.read(zyraEngineProvider).valueOrNull;
+      if (eng == null || !mounted) return;
+      final ZyraBatch? b = eng.pollDetections();
+      if (b != null) setState(() => _latest = b);
+    });
+  }
+
+  Future<void> _stopAndDisposeCamera() async {
+    final CameraController? c = _controller;
+    _controller = null;
+    _streamStarted = false;
+    if (c == null) return;
+    try {
+      if (c.value.isStreamingImages) await c.stopImageStream();
+    } catch (_) {}
+    try {
+      await c.dispose();
+    } catch (_) {}
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Frame submission
+  // ---------------------------------------------------------------------------
+
+  void _onCameraImage(CameraImage img) {
+    final DateTime now = DateTime.now();
+    if (_lastSubmit != null && now.difference(_lastSubmit!) < _submitMinInterval) {
+      return;
+    }
+    _lastSubmit = now;
+
+    final ZyraEngine? eng = ref.read(zyraEngineProvider).valueOrNull;
+    if (eng == null) return;
+    if (img.planes.length < 3) return;
+
+    final int w = img.width;
+    final int h = img.height;
+    final Plane yPlane = img.planes[0];
+    final Plane uPlane = img.planes[1];
+    final Plane vPlane = img.planes[2];
+    final int uvPixelStride = uPlane.bytesPerPixel ?? 2;
+
+    // Pack into a single native buffer: Y block (W*H) + chroma block
+    // (W*(H/2) for semi-planar, W*H/2 for planar I420).
+    //
+    // For semi-planar (pixelStride=2 — NV21/NV12), we take plane[2].bytes
+    // (V-starting stream) which matches NV21 layout on the vast majority
+    // of Android devices (including our Realme target). We then set
+    // u = uv+1, v = uv so that engine.cpp's `v < u` heuristic selects
+    // COLOR_YUV2RGB_NV21. On an NV12 device, this costs us a 1-pixel
+    // horizontal shift of U samples — noticeable only as a small color
+    // tint, YOLO still detects correctly.
+    //
+    // For planar I420 (pixelStride=1), we pack U-then-V into the chroma
+    // block and let engine.cpp's I420 path handle it.
+    final int ySize = w * h;
+    final int uvRows = h ~/ 2;
+    final int uvCols = w ~/ 2;
+    final int chromaSize = uvPixelStride == 2 ? w * uvRows : 2 * uvCols * uvRows;
+    final int total = ySize + chromaSize;
+
+    final ffi.Pointer<ffi.Uint8> buf = malloc<ffi.Uint8>(total);
+    try {
+      _packY(yPlane, buf, w, h);
+      if (uvPixelStride == 2) {
+        _packSemiPlanar(vPlane, buf + ySize, w, uvRows);
+      } else {
+        _packI420(uPlane, vPlane, buf + ySize, uvCols, uvRows);
+      }
+
+      final int sensorOrientation = _camera?.sensorOrientation ?? 0;
+      _frameId += 1;
+      eng.submitFrame(
+        y: buf,
+        u: uvPixelStride == 2 ? buf + ySize + 1 : buf + ySize,
+        v: uvPixelStride == 2 ? buf + ySize : buf + ySize + uvCols * uvRows,
+        width: w,
+        height: h,
+        yRowStride: w,
+        uvRowStride: uvPixelStride == 2 ? w : uvCols,
+        uvPixelStride: uvPixelStride,
+        rotationDeg: sensorOrientation,
+        frameId: _frameId,
+        timestampMs: now.millisecondsSinceEpoch.toDouble(),
+      );
+    } finally {
+      malloc.free(buf);
+    }
+  }
+
+  void _packY(
+      Plane y, ffi.Pointer<ffi.Uint8> dst, int width, int height) {
+    final Uint8List dstList = dst.asTypedList(width * height);
+    final Uint8List src = y.bytes;
+    if (y.bytesPerRow == width) {
+      dstList.setRange(0, width * height, src);
+      return;
+    }
+    // Strip row-stride padding.
+    final int rowStride = y.bytesPerRow;
+    for (int r = 0; r < height; r++) {
+      final int srcOff = r * rowStride;
+      final int dstOff = r * width;
+      dstList.setRange(dstOff, dstOff + width, src, srcOff);
+    }
+  }
+
+  void _packSemiPlanar(Plane v, ffi.Pointer<ffi.Uint8> dst,
+      int width, int uvRows) {
+    // Target: W × uvRows bytes of VU-interleaved (NV21) data.
+    final int bytes = width * uvRows;
+    final Uint8List dstList = dst.asTypedList(bytes);
+    final Uint8List src = v.bytes;
+    final int rowStride = v.bytesPerRow;
+    if (rowStride == width && src.length >= bytes) {
+      dstList.setRange(0, bytes, src);
+      return;
+    }
+    for (int r = 0; r < uvRows; r++) {
+      final int srcOff = r * rowStride;
+      final int dstOff = r * width;
+      final int maxCopy = src.length - srcOff;
+      final int toCopy = maxCopy >= width ? width : (maxCopy > 0 ? maxCopy : 0);
+      if (toCopy > 0) {
+        dstList.setRange(dstOff, dstOff + toCopy, src, srcOff);
+      }
+    }
+  }
+
+  void _packI420(Plane u, Plane v, ffi.Pointer<ffi.Uint8> dst,
+      int uvCols, int uvRows) {
+    // Layout in native buffer: U plane then V plane, each contiguous
+    // (rowStride = uvCols).
+    final int plane = uvCols * uvRows;
+    final Uint8List uDst = dst.asTypedList(plane);
+    final Uint8List vDst = (dst + plane).asTypedList(plane);
+    _copyPlaneRows(u, uDst, uvCols, uvRows);
+    _copyPlaneRows(v, vDst, uvCols, uvRows);
+  }
+
+  void _copyPlaneRows(Plane p, Uint8List dst, int cols, int rows) {
+    final Uint8List src = p.bytes;
+    final int rowStride = p.bytesPerRow;
+    if (rowStride == cols && src.length >= cols * rows) {
+      dst.setRange(0, cols * rows, src);
+      return;
+    }
+    for (int r = 0; r < rows; r++) {
+      final int srcOff = r * rowStride;
+      final int dstOff = r * cols;
+      final int maxCopy = src.length - srcOff;
+      final int toCopy = maxCopy >= cols ? cols : (maxCopy > 0 ? maxCopy : 0);
+      if (toCopy > 0) {
+        dst.setRange(dstOff, dstOff + toCopy, src, srcOff);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Build
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     final AsyncValue<VehicleProfile?> profileAsync =
         ref.watch(vehicleProfileProvider);
-    final ThemeData theme = Theme.of(context);
+    final AsyncValue<ZyraEngine> engineAsync = ref.watch(zyraEngineProvider);
 
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
         title: const Text('Drive'),
+        backgroundColor: Colors.black.withValues(alpha: 0.35),
         actions: <Widget>[
           IconButton(
             tooltip: 'Engine debug',
@@ -95,93 +367,170 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
           ),
         ],
       ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: profileAsync.when(
-            loading: () =>
-                const Center(child: CircularProgressIndicator()),
-            error: (Object e, _) => Center(child: Text('$e')),
-            data: (VehicleProfile? profile) {
-              if (profile == null) {
-                // Should not happen — router guards against this — but fall
-                // back gracefully rather than crash.
-                return const Center(
-                  child: Text('No vehicle selected.'),
-                );
-              }
-              return _DriveStub(
-                profile: profile,
-                permissions: _permissionResult,
-                requesting: _requesting,
+      extendBodyBehindAppBar: true,
+      body: profileAsync.when(
+        loading: () =>
+            const Center(child: CircularProgressIndicator()),
+        error: (Object e, _) => Center(child: Text('$e')),
+        data: (VehicleProfile? profile) {
+          if (profile == null) {
+            return const Center(child: Text('No vehicle selected.'));
+          }
+          final bool cameraGranted =
+              _permissionResult?.cameraGranted ?? false;
+          if (!cameraGranted) {
+            return SafeArea(
+              child: _PermissionPanel(
+                result: _permissionResult,
+                requesting: _requestingPermissions,
                 onRetry: _requestPermissions,
-                theme: theme,
-              );
-            },
-          ),
-        ),
+              ),
+            );
+          }
+          return _LiveView(
+            controller: _controller,
+            camera: _camera,
+            cameraError: _cameraError,
+            engineAsync: engineAsync,
+            latest: _latest,
+            profile: profile,
+          );
+        },
       ),
     );
   }
 }
 
-class _DriveStub extends StatelessWidget {
-  const _DriveStub({
+// =============================================================================
+//  Live preview + overlay
+// =============================================================================
+
+class _LiveView extends StatelessWidget {
+  const _LiveView({
+    required this.controller,
+    required this.camera,
+    required this.cameraError,
+    required this.engineAsync,
+    required this.latest,
     required this.profile,
-    required this.permissions,
-    required this.requesting,
-    required this.onRetry,
-    required this.theme,
   });
 
+  final CameraController? controller;
+  final CameraDescription? camera;
+  final Object? cameraError;
+  final AsyncValue<ZyraEngine> engineAsync;
+  final ZyraBatch? latest;
   final VehicleProfile profile;
-  final DrivePermissionResult? permissions;
-  final bool requesting;
-  final VoidCallback onRetry;
-  final ThemeData theme;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    if (cameraError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Camera failed to start:\n$cameraError',
+            style: const TextStyle(color: Colors.white70),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+    final CameraController? c = controller;
+    if (c == null || !c.value.isInitialized) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (engineAsync.isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            CircularProgressIndicator(),
+            SizedBox(height: 12),
+            Text('Starting perception engine…',
+                style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+      );
+    }
+    final ZyraEngine? engine = engineAsync.valueOrNull;
+    if (engine == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Engine unavailable:\n${engineAsync.error}',
+            style: const TextStyle(color: Colors.white70),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    // Sensor-native size is reported by the plugin as landscape
+    // (width > height on back cameras in portrait UI).
+    final Size preview = c.value.previewSize ?? const Size(1280, 720);
+    final int sensorOrientation = camera?.sensorOrientation ?? 90;
+    final bool isFront = camera?.lensDirection == CameraLensDirection.front;
+    final AdasColors adas = Theme.of(context).extension<AdasColors>()!;
+
+    // controller.value.aspectRatio is w/h of the sensor frame; for portrait
+    // display we swap.
+    final double displayAspect =
+        (sensorOrientation == 90 || sensorOrientation == 270)
+            ? preview.height / preview.width
+            : preview.width / preview.height;
+
+    return Stack(
+      fit: StackFit.expand,
       children: <Widget>[
-        Text(
-          'Vehicle profile',
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: ZyraTheme.onSurfaceMuted,
-            letterSpacing: 1.2,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(profile.displayName, style: theme.textTheme.headlineMedium),
-        const SizedBox(height: 24),
-        _PermissionCard(
-          permissions: permissions,
-          requesting: requesting,
-          onRetry: onRetry,
-        ),
-        const Spacer(),
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: ZyraTheme.surface,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: ZyraTheme.outline),
-          ),
-          child: Row(
-            children: <Widget>[
-              Icon(Icons.construction_rounded,
-                  color: theme.colorScheme.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Camera preview + live detection land in Phase 5.\n'
-                  'This stub confirms routing, profile persistence, and '
-                  'permission handling are wired up correctly.',
-                  style: theme.textTheme.bodyMedium,
+        Center(
+          child: AspectRatio(
+            aspectRatio: displayAspect,
+            child: Stack(
+              fit: StackFit.expand,
+              children: <Widget>[
+                CameraPreview(c),
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: DetectionOverlayPainter(
+                      batch: latest,
+                      sensorWidth: preview.width,
+                      sensorHeight: preview.height,
+                      sensorOrientation: sensorOrientation,
+                      adas: adas,
+                      mirror: isFront,
+                    ),
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            bottom: false,
+            child: FpsBar(
+              fps: engine.avgFps,
+              vulkanActive: engine.vulkanActive == 1,
+              vehicleName: profile.displayName,
+            ),
+          ),
+        ),
+        Positioned(
+          bottom: 0,
+          left: 0,
+          right: 0,
+          child: SafeArea(
+            top: false,
+            child: StatusBar(
+              detections: latest?.detections.length ?? 0,
+              totalMs: latest?.totalMs ?? 0,
+              inferMs: latest?.inferMs ?? 0,
+            ),
           ),
         ),
       ],
@@ -189,62 +538,55 @@ class _DriveStub extends StatelessWidget {
   }
 }
 
-class _PermissionCard extends StatelessWidget {
-  const _PermissionCard({
-    required this.permissions,
+// =============================================================================
+//  Permissions panel (pre-live)
+// =============================================================================
+
+class _PermissionPanel extends StatelessWidget {
+  const _PermissionPanel({
+    required this.result,
     required this.requesting,
     required this.onRetry,
   });
 
-  final DrivePermissionResult? permissions;
+  final DrivePermissionResult? result;
   final bool requesting;
   final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final bool cameraOk = permissions?.cameraGranted ?? false;
-    final bool locationOk = permissions?.locationGranted ?? false;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: ZyraTheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: ZyraTheme.outline),
-      ),
+    final bool cameraOk = result?.cameraGranted ?? false;
+    final bool locationOk = result?.locationGranted ?? false;
+    return Padding(
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          Text('Permissions', style: theme.textTheme.titleMedium),
-          const SizedBox(height: 12),
-          _PermissionRow(
-            label: 'Camera',
-            granted: cameraOk,
-            required: true,
-          ),
+          const SizedBox(height: 16),
+          Text('Permissions needed', style: theme.textTheme.headlineMedium),
+          const SizedBox(height: 16),
+          _PermissionRow(label: 'Camera', granted: cameraOk, required: true),
           const SizedBox(height: 8),
           _PermissionRow(
-            label: 'Location',
-            granted: locationOk,
-            required: false,
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: <Widget>[
-              if (requesting)
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                TextButton.icon(
-                  onPressed: onRetry,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Re-request'),
-                ),
-            ],
+              label: 'Location', granted: locationOk, required: false),
+          const SizedBox(height: 24),
+          if (requesting)
+            const Center(child: CircularProgressIndicator())
+          else
+            Center(
+              child: FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Request again'),
+              ),
+            ),
+          const SizedBox(height: 16),
+          Text(
+            'Camera access is required for perception. Location is optional '
+            'and unlocks GPS-based speed + heading in later phases.',
+            style: theme.textTheme.bodyMedium
+                ?.copyWith(color: ZyraTheme.onSurfaceMuted),
           ),
         ],
       ),
