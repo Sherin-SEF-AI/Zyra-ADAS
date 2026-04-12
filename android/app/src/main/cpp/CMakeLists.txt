@@ -71,6 +71,7 @@ set(ZYRA_SOURCES
     src/logging.cpp
     src/ffi_api.cpp
     src/detector.cpp
+    src/engine.cpp
     src/preprocess.cpp
     src/nms.cpp
 )

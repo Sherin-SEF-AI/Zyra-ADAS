@@ -1,8 +1,8 @@
 // FFI surface implementation. See zyra/ffi_api.h for the contract.
 //
-// Phase 2 added the three bootstrap stubs. Phase 3 adds a detector
-// self-test so we can validate the full pipeline (load → preprocess →
-// inference → NMS) from Dart before wiring the hot-path FFI in Phase 4.
+// Phase 2: bootstrap stubs.
+// Phase 3: detector_selftest.
+// Phase 4: zyra_engine_* — thin extern-C shims over PerceptionEngine.
 
 #include "zyra/ffi_api.h"
 
@@ -14,9 +14,20 @@
 
 #include "zyra/detection.h"
 #include "zyra/detector.h"
+#include "zyra/engine.h"
 #include "zyra/logging.h"
 
+namespace {
+
+inline zyra::PerceptionEngine* as_engine(int64_t handle) {
+  return reinterpret_cast<zyra::PerceptionEngine*>(handle);
+}
+
+}  // namespace
+
 extern "C" {
+
+// --- Phase 2 --------------------------------------------------------------
 
 ZYRA_API int32_t zyra_hello(void) {
   return 42;
@@ -29,6 +40,8 @@ ZYRA_API void zyra_log_version(void) {
 ZYRA_API const char* zyra_ncnn_version(void) {
   return NCNN_VERSION_STRING;
 }
+
+// --- Phase 3 --------------------------------------------------------------
 
 ZYRA_API int32_t zyra_detector_selftest(const char* param_path,
                                         const char* bin_path,
@@ -48,25 +61,15 @@ ZYRA_API int32_t zyra_detector_selftest(const char* param_path,
       return -1;
     }
 
-    // Synthetic grey 640×640 input — matches the letterbox pad colour so
-    // we exercise load + inference + post-processing without relying on
-    // a sample asset. A well-trained model returns ~0 detections here,
-    // which is fine — the point is to prove the pipeline doesn't fault.
     std::vector<uint8_t> rgb(640 * 640 * 3, 114);
     const auto dets = det.detect_rgb(rgb.data(), 640, 640);
 
     if (out_detection_count != nullptr) {
       *out_detection_count = static_cast<int32_t>(dets.size());
     }
-    if (out_preprocess_ms != nullptr) {
-      *out_preprocess_ms = det.last_preprocess_ms();
-    }
-    if (out_infer_ms != nullptr) {
-      *out_infer_ms = det.last_infer_ms();
-    }
-    if (out_nms_ms != nullptr) {
-      *out_nms_ms = det.last_nms_ms();
-    }
+    if (out_preprocess_ms != nullptr) *out_preprocess_ms = det.last_preprocess_ms();
+    if (out_infer_ms != nullptr)      *out_infer_ms      = det.last_infer_ms();
+    if (out_nms_ms != nullptr)        *out_nms_ms        = det.last_nms_ms();
     if (out_vulkan_active != nullptr) {
       *out_vulkan_active = det.vulkan_active() ? 1 : 0;
     }
@@ -83,6 +86,93 @@ ZYRA_API int32_t zyra_detector_selftest(const char* param_path,
     ZYRA_LOGE("selftest: unknown exception");
     return -2;
   }
+}
+
+// --- Phase 4 --------------------------------------------------------------
+
+ZYRA_API int64_t zyra_engine_create(void) {
+  auto* eng = new (std::nothrow) zyra::PerceptionEngine();
+  if (eng == nullptr) {
+    ZYRA_LOGE("engine_create: allocation failed");
+    return 0;
+  }
+  return reinterpret_cast<int64_t>(eng);
+}
+
+ZYRA_API void zyra_engine_destroy(int64_t handle) {
+  if (handle == 0) return;
+  delete as_engine(handle);
+}
+
+ZYRA_API int32_t zyra_engine_load_model(int64_t handle,
+                                        const char* param_path,
+                                        const char* bin_path,
+                                        int32_t use_vulkan) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  if (param_path == nullptr || bin_path == nullptr) return -2;
+  return eng->load_model(param_path, bin_path, use_vulkan != 0);
+}
+
+ZYRA_API int32_t zyra_engine_warmup(int64_t handle) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  return eng->warmup();
+}
+
+ZYRA_API void zyra_engine_set_class_threshold(int64_t handle,
+                                              int32_t zyra_class_id,
+                                              float threshold) {
+  auto* eng = as_engine(handle);
+  if (eng != nullptr) eng->set_class_threshold(zyra_class_id, threshold);
+}
+
+ZYRA_API void zyra_engine_set_conf_threshold(int64_t handle, float threshold) {
+  auto* eng = as_engine(handle);
+  if (eng != nullptr) eng->set_conf_threshold(threshold);
+}
+
+ZYRA_API void zyra_engine_set_nms_iou(int64_t handle, float iou) {
+  auto* eng = as_engine(handle);
+  if (eng != nullptr) eng->set_nms_iou(iou);
+}
+
+ZYRA_API int32_t zyra_engine_submit_frame(int64_t handle,
+                                          const uint8_t* y,
+                                          const uint8_t* u,
+                                          const uint8_t* v,
+                                          int32_t width,
+                                          int32_t height,
+                                          int32_t y_row_stride,
+                                          int32_t uv_row_stride,
+                                          int32_t uv_pixel_stride,
+                                          int32_t rotation_deg,
+                                          uint64_t frame_id,
+                                          double timestamp_ms) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  return eng->submit(y, u, v, width, height, y_row_stride, uv_row_stride,
+                     uv_pixel_stride, rotation_deg, frame_id, timestamp_ms);
+}
+
+ZYRA_API int32_t zyra_engine_poll_detections(int64_t handle,
+                                             ZyraDetectionBatch* out) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  if (out == nullptr) return -2;
+  return eng->poll(out) ? 1 : 0;
+}
+
+ZYRA_API float zyra_engine_get_avg_fps(int64_t handle) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return 0.0f;
+  return eng->avg_fps();
+}
+
+ZYRA_API int32_t zyra_engine_is_vulkan_active(int64_t handle) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  return eng->vulkan_active();
 }
 
 }  // extern "C"

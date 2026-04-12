@@ -77,6 +77,13 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
         title: const Text('Drive'),
         actions: <Widget>[
           IconButton(
+            tooltip: 'Engine debug',
+            icon: const Icon(Icons.bug_report_outlined),
+            onPressed: () {
+              Navigator.of(context).pushNamed(ZyraRoutes.engineDebug);
+            },
+          ),
+          IconButton(
             tooltip: 'Change vehicle',
             icon: const Icon(Icons.directions_car_outlined),
             onPressed: () async {

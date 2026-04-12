@@ -1,0 +1,255 @@
+// Phase 4 — PerceptionEngine implementation. See include/zyra/engine.h for
+// the contract.
+
+#include "zyra/engine.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+#include <vector>
+
+#include "zyra/detection.h"
+#include "zyra/frame.h"
+#include "zyra/logging.h"
+
+namespace zyra {
+
+namespace {
+
+using clk = std::chrono::steady_clock;
+
+inline double now_ms() {
+  const auto d = clk::now().time_since_epoch();
+  return std::chrono::duration<double, std::milli>(d).count();
+}
+
+}  // namespace
+
+PerceptionEngine::PerceptionEngine() = default;
+
+PerceptionEngine::~PerceptionEngine() {
+  // Signal the worker to exit and kick the CV. joining without signalling
+  // would hang because the thread is asleep on `pending_cv_`.
+  stop_.store(true, std::memory_order_relaxed);
+  pending_cv_.notify_all();
+  if (worker_.joinable()) worker_.join();
+}
+
+int PerceptionEngine::load_model(const std::string& param_path,
+                                 const std::string& bin_path,
+                                 bool use_vulkan) {
+  if (param_path.empty() || bin_path.empty()) return -2;
+  if (!detector_.load(param_path, bin_path, use_vulkan)) return -3;
+  loaded_.store(true, std::memory_order_release);
+
+  // Start the worker if this is the first successful load. Re-loading the
+  // model on an already-running engine reuses the existing worker — the
+  // detector_ instance is rebound in place.
+  if (!worker_.joinable()) {
+    worker_ = std::thread([this] { worker_loop_(); });
+  }
+  return 0;
+}
+
+int PerceptionEngine::warmup() {
+  if (!loaded_.load(std::memory_order_acquire)) return -1;
+  std::vector<uint8_t> grey(640 * 640 * 3, 114);
+  (void)detector_.detect_rgb(grey.data(), 640, 640);
+  return 0;
+}
+
+void PerceptionEngine::set_class_threshold(int id, float t) {
+  detector_.set_class_threshold(id, t);
+}
+void PerceptionEngine::set_conf_threshold(float t) {
+  detector_.set_conf_threshold(t);
+}
+void PerceptionEngine::set_nms_iou(float iou) {
+  detector_.set_nms_iou(iou);
+}
+
+int PerceptionEngine::vulkan_active() const {
+  if (!loaded_.load(std::memory_order_acquire)) return -1;
+  return detector_.vulkan_active() ? 1 : 0;
+}
+
+int PerceptionEngine::submit(const uint8_t* y, const uint8_t* u,
+                             const uint8_t* v, int W, int H,
+                             int y_row_stride, int uv_row_stride,
+                             int uv_pixel_stride, int rotation_deg,
+                             uint64_t frame_id, double timestamp_ms) {
+  if (!loaded_.load(std::memory_order_acquire)) return -2;
+  if (y == nullptr || u == nullptr || v == nullptr) return -3;
+  if (W <= 0 || H <= 0) return -3;
+
+  Pending next;
+  next.width = W;
+  next.height = H;
+  next.uv_row_stride = 0;  // filled per variant below
+  next.uv_pixel_stride = uv_pixel_stride;
+  next.rotation = rotation_deg;
+  next.frame_id = frame_id;
+  next.timestamp_ms = timestamp_ms;
+  next.is_nv21 = (v < u);
+
+  // --- Y plane: strip row-stride padding, land in exactly W*H bytes ----
+  next.y_buf.resize(static_cast<size_t>(W) * H);
+  if (y_row_stride == W) {
+    std::memcpy(next.y_buf.data(), y, static_cast<size_t>(W) * H);
+  } else {
+    for (int r = 0; r < H; ++r) {
+      std::memcpy(next.y_buf.data() + static_cast<size_t>(r) * W,
+                  y + static_cast<size_t>(r) * y_row_stride,
+                  static_cast<size_t>(W));
+    }
+  }
+
+  // --- UV plane: preserve byte ordering so preprocess detects the
+  //     variant the same way it would from the original camera buffers.
+  if (uv_pixel_stride == 2) {
+    // Semi-planar — copy one contiguous block starting from min(u,v).
+    const uint8_t* uv_src = (v < u) ? v : u;
+    const int uv_rows = H / 2;
+    next.uv_buf.resize(static_cast<size_t>(W) * uv_rows);
+    if (uv_row_stride == W) {
+      std::memcpy(next.uv_buf.data(), uv_src,
+                  static_cast<size_t>(W) * uv_rows);
+    } else {
+      for (int r = 0; r < uv_rows; ++r) {
+        std::memcpy(next.uv_buf.data() + static_cast<size_t>(r) * W,
+                    uv_src + static_cast<size_t>(r) * uv_row_stride,
+                    static_cast<size_t>(W));
+      }
+    }
+    next.uv_row_stride = W;
+  } else {
+    // Fully planar I420 — pack U then V into uv_buf.
+    const int uv_cols = W / 2;
+    const int uv_rows = H / 2;
+    next.uv_buf.resize(static_cast<size_t>(2) * uv_cols * uv_rows);
+    uint8_t* u_dst = next.uv_buf.data();
+    uint8_t* v_dst = u_dst + static_cast<size_t>(uv_cols) * uv_rows;
+    for (int r = 0; r < uv_rows; ++r) {
+      std::memcpy(u_dst + static_cast<size_t>(r) * uv_cols,
+                  u + static_cast<size_t>(r) * uv_row_stride,
+                  static_cast<size_t>(uv_cols));
+      std::memcpy(v_dst + static_cast<size_t>(r) * uv_cols,
+                  v + static_cast<size_t>(r) * uv_row_stride,
+                  static_cast<size_t>(uv_cols));
+    }
+    next.uv_row_stride = uv_cols;
+  }
+  next.has_data = true;
+
+  {
+    std::lock_guard<std::mutex> lk(pending_mu_);
+    pending_ = std::move(next);
+  }
+  pending_cv_.notify_one();
+  return 0;
+}
+
+bool PerceptionEngine::poll(ZyraDetectionBatch* out) {
+  if (out == nullptr) return false;
+  std::lock_guard<std::mutex> lk(result_mu_);
+  if (!result_valid_) return false;
+  *out = result_;
+  return true;
+}
+
+void PerceptionEngine::worker_loop_() {
+  ZYRA_LOGI("engine worker thread started");
+
+  while (!stop_.load(std::memory_order_relaxed)) {
+    Pending p;
+    {
+      std::unique_lock<std::mutex> lk(pending_mu_);
+      pending_cv_.wait(lk, [this] {
+        return stop_.load(std::memory_order_relaxed) || pending_.has_data;
+      });
+      if (stop_.load(std::memory_order_relaxed)) break;
+      p = std::move(pending_);
+      pending_.has_data = false;
+    }
+
+    // --- Reconstruct a FrameView over the copied buffers. ----------------
+    FrameView fv{};
+    fv.y = p.y_buf.data();
+    fv.width = p.width;
+    fv.height = p.height;
+    fv.y_row_stride = p.width;
+    fv.uv_pixel_stride = p.uv_pixel_stride;
+    fv.uv_row_stride = p.uv_row_stride;
+    fv.rotation_deg = p.rotation;
+
+    if (p.uv_pixel_stride == 2) {
+      // Preserved original byte ordering. V=buf[0]/U=buf[1] for NV21,
+      // U=buf[0]/V=buf[1] for NV12.
+      if (p.is_nv21) {
+        fv.v = p.uv_buf.data();
+        fv.u = p.uv_buf.data() + 1;
+      } else {
+        fv.u = p.uv_buf.data();
+        fv.v = p.uv_buf.data() + 1;
+      }
+    } else {
+      // I420 — U then V planes in uv_buf.
+      const int plane = (p.width / 2) * (p.height / 2);
+      fv.u = p.uv_buf.data();
+      fv.v = p.uv_buf.data() + plane;
+    }
+
+    // --- Run detection (unlocked). ---------------------------------------
+    std::vector<Detection> dets;
+    try {
+      dets = detector_.detect(fv);
+    } catch (...) {
+      ZYRA_LOGE("detector threw — dropping frame %llu",
+                static_cast<unsigned long long>(p.frame_id));
+      continue;
+    }
+
+    // --- Publish the batch. ---------------------------------------------
+    ZyraDetectionBatch batch{};
+    batch.frame_id = p.frame_id;
+    batch.timestamp_ms = p.timestamp_ms;
+    const int n = std::min<int>(static_cast<int>(dets.size()),
+                                ZYRA_MAX_DETECTIONS);
+    batch.count = n;
+    batch.rotation_deg = p.rotation;
+    batch.orig_width = p.width;
+    batch.orig_height = p.height;
+    batch.preprocess_ms = detector_.last_preprocess_ms();
+    batch.infer_ms = detector_.last_infer_ms();
+    batch.nms_ms = detector_.last_nms_ms();
+    batch.vulkan_active = detector_.vulkan_active() ? 1 : 0;
+    for (int i = 0; i < n; ++i) {
+      batch.detections[i] = ZyraDetection{
+          dets[i].x1, dets[i].y1, dets[i].x2, dets[i].y2,
+          dets[i].class_id, dets[i].confidence,
+      };
+    }
+
+    {
+      std::lock_guard<std::mutex> lk(result_mu_);
+      result_ = batch;
+      result_valid_ = true;
+    }
+
+    // --- FPS tracking: sliding 1-second window. --------------------------
+    const double t = now_ms();
+    {
+      std::lock_guard<std::mutex> lk(fps_mu_);
+      fps_samples_ms_.push_back(t);
+      while (!fps_samples_ms_.empty() && fps_samples_ms_.front() < t - 1000.0) {
+        fps_samples_ms_.pop_front();
+      }
+      avg_fps_.store(static_cast<float>(fps_samples_ms_.size()),
+                     std::memory_order_relaxed);
+    }
+  }
+
+  ZYRA_LOGI("engine worker thread exiting");
+}
+
+}  // namespace zyra
