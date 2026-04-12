@@ -1,12 +1,28 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/routes.dart';
 import 'app/theme.dart';
+import 'core/ffi/zyra_native.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Phase 2 smoke test — prove libzyra_perception.so loads, NCNN + OpenCV
+  // are linked in, and Dart→C++ FFI is callable end-to-end. Logs on both
+  // sides so we can verify via `adb logcat -s Zyra:V flutter:V` that the
+  // values agree.
+  try {
+    final ZyraNative native = ZyraNative.open();
+    final int hello = native.hello();
+    native.logVersion();
+    debugPrint(
+        '[Zyra] FFI bootstrap ok — zyra_hello=$hello ncnn=${native.ncnnVersion()}');
+  } catch (e, st) {
+    debugPrint('[Zyra] FFI bootstrap FAILED: $e\n$st');
+  }
 
   // Lock the app to portrait — driver-facing HUD is designed for portrait only.
   await SystemChrome.setPreferredOrientations(<DeviceOrientation>[
