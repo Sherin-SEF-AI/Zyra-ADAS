@@ -26,6 +26,11 @@ Zyra turns it into a **shadow-mode ADAS**: it watches the road and predicts what
 
 Built for riders, fleet operators, researchers, and anyone who wants to see the world the way an autonomy stack sees it.
 
+
+https://github.com/user-attachments/assets/5930e96d-a6ff-43bf-81db-19d5d245d54e
+
+
+
 ## What it does
 
 | Capability | Detail |
