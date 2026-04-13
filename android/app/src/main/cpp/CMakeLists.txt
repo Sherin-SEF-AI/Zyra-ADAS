@@ -77,6 +77,8 @@ set(ZYRA_SOURCES
     src/lane.cpp
     src/lane_tracker.cpp
     src/lane_assist.cpp
+    src/object_tracker.cpp
+    src/fcw.cpp
 )
 
 add_library(zyra_perception SHARED ${ZYRA_SOURCES})

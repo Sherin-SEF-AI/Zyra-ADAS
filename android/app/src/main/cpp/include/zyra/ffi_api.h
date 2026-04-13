@@ -127,6 +127,29 @@ typedef struct ZyraLaneAssist {
   int32_t drift_side;             // 0 left, 1 right, -1 none
 } ZyraLaneAssist;
 
+// Phase 8 — persistent-ID tracked object. Coords are smoothed (EMA) in
+// ORIGINAL image space; velocity is pixels/second.
+typedef struct ZyraTrack {
+  int32_t id;                // monotonic; 1-based
+  int32_t class_id;          // Zyra class
+  float x1, y1, x2, y2;
+  float vx_px_s, vy_px_s;
+  int32_t age_frames;
+  float confidence;
+  float height_rate_per_s;   // fractional; +ve = approaching camera
+} ZyraTrack;
+
+#define ZYRA_MAX_TRACKS 32
+
+// Phase 8 — Forward Collision Warning snapshot.
+typedef struct ZyraFcw {
+  int32_t state;                 // 0 SAFE, 1 CAUTION, 2 WARN, 3 ALERT
+  float ttc_s;                   // critical target TTC; +INF if none
+  int32_t critical_track_id;     // -1 if no target
+  int32_t critical_class_id;     // Zyra class; -1 if no target
+  float critical_bbox_h_frac;    // critical bbox height / frame height
+} ZyraFcw;
+
 typedef struct ZyraDetectionBatch {
   uint64_t frame_id;          // monotonic, set by producer
   double timestamp_ms;        // producer wall-clock (CLOCK_MONOTONIC × 1e3)
@@ -154,6 +177,13 @@ typedef struct ZyraDetectionBatch {
   int32_t reserved3;
   ZyraLaneCurve curves[ZYRA_MAX_LANE_CURVES];
   ZyraLaneAssist assist;
+  // --- Phase 8 tracker + FCW block --------------------------------------
+  int32_t track_count;
+  float object_tracker_ms;      // ObjectTracker.update wall-clock
+  float fcw_ms;                 // FCW.update wall-clock
+  int32_t reserved4;
+  ZyraTrack tracks[ZYRA_MAX_TRACKS];
+  ZyraFcw fcw;
 } ZyraDetectionBatch;
 
 // Create a new engine. Returns an opaque handle > 0 on success, or 0 on

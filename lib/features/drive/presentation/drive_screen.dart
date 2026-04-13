@@ -18,6 +18,7 @@ import '../../vehicle_select/application/vehicle_profile_notifier.dart';
 import '../../vehicle_select/data/vehicle_profile.dart';
 import 'widgets/advanced_lane_overlay_painter.dart';
 import 'widgets/detection_overlay_painter.dart';
+import 'widgets/fcw_banner.dart';
 import 'widgets/fps_bar.dart';
 import 'widgets/lane_assist_hud.dart';
 import 'widgets/lane_overlay_painter.dart';
@@ -66,6 +67,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
   int _frameId = 0;
   DateTime? _lastSubmit;
   ZyraLdwState _prevLdw = ZyraLdwState.disarmed;
+  ZyraFcwState _prevFcw = ZyraFcwState.safe;
 
   @override
   void initState() {
@@ -191,6 +193,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
       final ZyraBatch? b = eng.pollDetections();
       if (b != null) {
         _maybeHaptic(b.assist.state);
+        _maybeFcwHaptic(b.fcw.state);
         setState(() => _latest = b);
       }
     });
@@ -207,6 +210,24 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     if (next == ZyraLdwState.alert && prev != ZyraLdwState.alert) {
       HapticFeedback.heavyImpact();
     } else if (next == ZyraLdwState.warn && prev == ZyraLdwState.armed) {
+      HapticFeedback.mediumImpact();
+    }
+  }
+
+  /// FCW haptics — fires once per rising-severity transition. A collision
+  /// cue must not disappear into a spurious taptic pattern, so the ALERT
+  /// buzz is always `heavyImpact`; WARN uses `mediumImpact`; CAUTION is
+  /// visual-only to stay out of the driver's way on routine tailgating.
+  void _maybeFcwHaptic(ZyraFcwState next) {
+    if (next == _prevFcw) return;
+    final ZyraFcwState prev = _prevFcw;
+    _prevFcw = next;
+    final int nextRank = next.index;
+    final int prevRank = prev.index;
+    if (nextRank <= prevRank) return;
+    if (next == ZyraFcwState.alert) {
+      HapticFeedback.heavyImpact();
+    } else if (next == ZyraFcwState.warn) {
       HapticFeedback.mediumImpact();
     }
   }
@@ -577,10 +598,17 @@ class _LiveView extends StatelessWidget {
           right: 0,
           child: SafeArea(
             bottom: false,
-            child: FpsBar(
-              fps: engine.avgFps,
-              vulkanActive: engine.vulkanActive == 1,
-              vehicleName: profile.displayName,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                FpsBar(
+                  fps: engine.avgFps,
+                  vulkanActive: engine.vulkanActive == 1,
+                  vehicleName: profile.displayName,
+                ),
+                if (latest != null && latest!.fcw.isActive)
+                  FcwBanner(fcw: latest!.fcw),
+              ],
             ),
           ),
         ),

@@ -231,6 +231,15 @@ void PerceptionEngine::worker_loop_() {
                 static_cast<unsigned long long>(p.frame_id));
     }
 
+    // --- Phase 8: object tracker + forward collision warning. ------------
+    try {
+      object_tracker_.update(dets, p.timestamp_ms);
+      fcw_.update(object_tracker_.tracks(), p.width, p.height);
+    } catch (...) {
+      ZYRA_LOGE("object tracker / fcw threw on frame %llu",
+                static_cast<unsigned long long>(p.frame_id));
+    }
+
     // --- Publish the batch. ---------------------------------------------
     ZyraDetectionBatch batch{};
     batch.frame_id = p.frame_id;
@@ -288,6 +297,32 @@ void PerceptionEngine::worker_loop_() {
     batch.assist.armed = st.armed;
     batch.assist.dist_to_line_px = st.dist_to_line_px;
     batch.assist.drift_side = st.drift_side;
+
+    // --- Phase 8: tracks + FCW pack. -------------------------------------
+    const std::vector<TrackedObject> live_tracks = object_tracker_.tracks();
+    const int tc = std::min<int>(static_cast<int>(live_tracks.size()),
+                                 ZYRA_MAX_TRACKS);
+    batch.track_count = tc;
+    batch.object_tracker_ms = object_tracker_.last_ms();
+    for (int i = 0; i < tc; ++i) {
+      const TrackedObject& t = live_tracks[i];
+      batch.tracks[i].id = t.id;
+      batch.tracks[i].class_id = t.class_id;
+      batch.tracks[i].x1 = t.x1; batch.tracks[i].y1 = t.y1;
+      batch.tracks[i].x2 = t.x2; batch.tracks[i].y2 = t.y2;
+      batch.tracks[i].vx_px_s = t.vx_px_s;
+      batch.tracks[i].vy_px_s = t.vy_px_s;
+      batch.tracks[i].age_frames = t.age_frames;
+      batch.tracks[i].confidence = t.confidence;
+      batch.tracks[i].height_rate_per_s = t.height_rate_per_s;
+    }
+    const FcwSnapshot& f = fcw_.state();
+    batch.fcw.state = f.state;
+    batch.fcw.ttc_s = f.ttc_s;
+    batch.fcw.critical_track_id = f.critical_track_id;
+    batch.fcw.critical_class_id = f.critical_class_id;
+    batch.fcw.critical_bbox_h_frac = f.critical_bbox_h_frac;
+    batch.fcw_ms = 0.0f;  // tracker + fcw already budgeted under object_tracker_ms
 
     {
       std::lock_guard<std::mutex> lk(result_mu_);

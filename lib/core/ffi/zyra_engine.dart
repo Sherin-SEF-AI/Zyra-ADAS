@@ -370,6 +370,33 @@ class ZyraEngine {
       driftSide: a.driftSide,
     );
 
+    final int tc = b.trackCount.clamp(0, kZyraMaxTracks);
+    final List<ZyraTrack> tracks = List<ZyraTrack>.generate(tc, (int i) {
+      final ZyraTrackStruct t = b.tracks[i];
+      return ZyraTrack(
+        id: t.id,
+        classId: t.classId,
+        x1: t.x1,
+        y1: t.y1,
+        x2: t.x2,
+        y2: t.y2,
+        vxPxS: t.vxPxS,
+        vyPxS: t.vyPxS,
+        ageFrames: t.ageFrames,
+        confidence: t.confidence,
+        heightRatePerS: t.heightRatePerS,
+      );
+    });
+
+    final ZyraFcwStruct fs = b.fcw;
+    final ZyraFcw fcw = ZyraFcw(
+      state: zyraFcwFromInt(fs.state),
+      ttcS: fs.ttcS,
+      criticalTrackId: fs.criticalTrackId,
+      criticalClassId: fs.criticalClassId,
+      criticalBboxHFrac: fs.criticalBboxHFrac,
+    );
+
     return ZyraBatch(
       frameId: b.frameId,
       timestampMs: b.timestampMs,
@@ -386,6 +413,10 @@ class ZyraEngine {
       curves: curves,
       trackerMs: b.trackerMs,
       assist: assist,
+      tracks: tracks,
+      objectTrackerMs: b.objectTrackerMs,
+      fcwMs: b.fcwMs,
+      fcw: fcw,
     );
   }
 

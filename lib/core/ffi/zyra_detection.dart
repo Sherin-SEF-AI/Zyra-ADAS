@@ -11,6 +11,9 @@ const int kZyraMaxLanes = 8;
 /// Matches `ZYRA_MAX_LANE_CURVES` (left / right / center).
 const int kZyraMaxLaneCurves = 3;
 
+/// Matches `ZYRA_MAX_TRACKS` in cpp/include/zyra/ffi_api.h.
+const int kZyraMaxTracks = 32;
+
 /// dart:ffi struct mirroring `ZyraDetection` in cpp/include/zyra/ffi_api.h.
 /// Layout MUST stay in sync — the native code copies into this buffer by
 /// absolute offset.
@@ -85,6 +88,46 @@ final class ZyraLaneAssistStruct extends ffi.Struct {
   external int driftSide;
 }
 
+/// Phase 8 — per-object track. Mirrors `ZyraTrack` in ffi_api.h.
+final class ZyraTrackStruct extends ffi.Struct {
+  @ffi.Int32()
+  external int id;
+  @ffi.Int32()
+  external int classId;
+  @ffi.Float()
+  external double x1;
+  @ffi.Float()
+  external double y1;
+  @ffi.Float()
+  external double x2;
+  @ffi.Float()
+  external double y2;
+  @ffi.Float()
+  external double vxPxS;
+  @ffi.Float()
+  external double vyPxS;
+  @ffi.Int32()
+  external int ageFrames;
+  @ffi.Float()
+  external double confidence;
+  @ffi.Float()
+  external double heightRatePerS;
+}
+
+/// Phase 8 — FCW snapshot. Mirrors `ZyraFcw` in ffi_api.h.
+final class ZyraFcwStruct extends ffi.Struct {
+  @ffi.Int32()
+  external int state;
+  @ffi.Float()
+  external double ttcS;
+  @ffi.Int32()
+  external int criticalTrackId;
+  @ffi.Int32()
+  external int criticalClassId;
+  @ffi.Float()
+  external double criticalBboxHFrac;
+}
+
 /// dart:ffi struct mirroring `ZyraDetectionBatch`. The fixed-size array is
 /// declared as an `ffi.Array` so Dart can access each slot as a
 /// `ZyraDetectionStruct` without allocation.
@@ -133,6 +176,18 @@ final class ZyraDetectionBatchStruct extends ffi.Struct {
   @ffi.Array(kZyraMaxLaneCurves)
   external ffi.Array<ZyraLaneCurveStruct> curves;
   external ZyraLaneAssistStruct assist;
+  // Phase 8 — tracker + FCW block. Must remain in this order.
+  @ffi.Int32()
+  external int trackCount;
+  @ffi.Float()
+  external double objectTrackerMs;
+  @ffi.Float()
+  external double fcwMs;
+  @ffi.Int32()
+  external int reserved4;
+  @ffi.Array(kZyraMaxTracks)
+  external ffi.Array<ZyraTrackStruct> tracks;
+  external ZyraFcwStruct fcw;
 }
 
 /// Immutable Dart-side detection. Returned by `ZyraEngine.pollDetections()`.
@@ -258,6 +313,82 @@ class ZyraLaneAssist {
   bool get isAlert => state == ZyraLdwState.alert;
 }
 
+/// Phase 8 — smoothed, persistent-ID object track.
+class ZyraTrack {
+  const ZyraTrack({
+    required this.id,
+    required this.classId,
+    required this.x1,
+    required this.y1,
+    required this.x2,
+    required this.y2,
+    required this.vxPxS,
+    required this.vyPxS,
+    required this.ageFrames,
+    required this.confidence,
+    required this.heightRatePerS,
+  });
+
+  final int id;
+  final int classId;
+  final double x1;
+  final double y1;
+  final double x2;
+  final double y2;
+  final double vxPxS;
+  final double vyPxS;
+  final int ageFrames;
+  final double confidence;
+
+  /// Fractional bbox-height expansion rate, in 1/sec. Positive = approaching.
+  final double heightRatePerS;
+
+  double get cx => 0.5 * (x1 + x2);
+  double get cy => 0.5 * (y1 + y2);
+  double get width => x2 - x1;
+  double get height => y2 - y1;
+}
+
+/// Phase 8 — FCW state levels.
+enum ZyraFcwState { safe, caution, warn, alert }
+
+ZyraFcwState zyraFcwFromInt(int v) {
+  switch (v) {
+    case 1:
+      return ZyraFcwState.caution;
+    case 2:
+      return ZyraFcwState.warn;
+    case 3:
+      return ZyraFcwState.alert;
+    case 0:
+    default:
+      return ZyraFcwState.safe;
+  }
+}
+
+/// Phase 8 — FCW snapshot for the current frame.
+class ZyraFcw {
+  const ZyraFcw({
+    required this.state,
+    required this.ttcS,
+    required this.criticalTrackId,
+    required this.criticalClassId,
+    required this.criticalBboxHFrac,
+  });
+
+  final ZyraFcwState state;
+  final double ttcS;
+  final int criticalTrackId;
+  final int criticalClassId;
+  final double criticalBboxHFrac;
+
+  bool get isSafe => state == ZyraFcwState.safe;
+  bool get isCaution => state == ZyraFcwState.caution;
+  bool get isWarn => state == ZyraFcwState.warn;
+  bool get isAlert => state == ZyraFcwState.alert;
+  bool get isActive => state != ZyraFcwState.safe;
+}
+
 ZyraLdwState zyraLdwFromInt(int v) {
   switch (v) {
     case 1:
@@ -291,6 +422,10 @@ class ZyraBatch {
     required this.curves,
     required this.trackerMs,
     required this.assist,
+    required this.tracks,
+    required this.objectTrackerMs,
+    required this.fcwMs,
+    required this.fcw,
   });
 
   final int frameId;
@@ -317,8 +452,27 @@ class ZyraBatch {
   /// Phase 7 — Lane Assist snapshot for this frame.
   final ZyraLaneAssist assist;
 
+  /// Phase 8 — persistent-ID tracked objects (confirmed, non-missed only).
+  final List<ZyraTrack> tracks;
+
+  /// Wall-clock of the object tracker stage in milliseconds.
+  final double objectTrackerMs;
+
+  /// Wall-clock of the FCW stage in milliseconds (bundled into tracker in
+  /// current build — kept as a separate field for future independent timing).
+  final double fcwMs;
+
+  /// Phase 8 — Forward Collision Warning snapshot for this frame.
+  final ZyraFcw fcw;
+
   double get totalMs =>
-      preprocessMs + inferMs + nmsMs + laneMs + trackerMs;
+      preprocessMs +
+      inferMs +
+      nmsMs +
+      laneMs +
+      trackerMs +
+      objectTrackerMs +
+      fcwMs;
 }
 
 /// Allocate a batch struct buffer suitable for passing to
