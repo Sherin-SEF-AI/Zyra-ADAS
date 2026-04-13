@@ -28,7 +28,7 @@ class NcnnYoloV8Detector {
   NcnnYoloV8Detector(const NcnnYoloV8Detector&) = delete;
   NcnnYoloV8Detector& operator=(const NcnnYoloV8Detector&) = delete;
 
-  // Load yolov8n.ncnn.param + .bin from real filesystem paths. `use_vulkan`
+  // Load yolov8s.ncnn.param + .bin from real filesystem paths. `use_vulkan`
   // is a request — we fall back to CPU if `ncnn::get_gpu_count() == 0`.
   // Safe to call more than once (rebinds the underlying Net).
   bool load(const std::string& param_path,

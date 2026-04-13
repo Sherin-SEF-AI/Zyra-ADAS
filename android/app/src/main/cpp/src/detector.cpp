@@ -47,18 +47,27 @@ inline int coco_to_zyra(int coco_id) {
   }
 }
 
-// Canonical per-Zyra-class thresholds — copied from
-// DEFAULT_CLASS_THRESHOLDS in yolo_trt.py. Indexed by Zyra class id.
+// Canonical per-Zyra-class thresholds — base values copied from desktop
+// `DEFAULT_CLASS_THRESHOLDS` in yolo_trt.py, then Phase 9 tuned for
+// YOLOv8s. The small model is better calibrated than the nano variant,
+// so we bump thresholds on classes whose false-positives have an
+// outsized cost:
+//   * pedestrian — a phantom pedestrian triggers FCW; raise from 0.20.
+//   * traffic_light / traffic_sign — desktop thresholds were picked
+//     when the model frequently misfired on brake lights and signage;
+//     YOLOv8s is cleaner here, but we keep the headroom.
+// Vehicle classes stay at desktop values — the tracker's min_hits=3
+// already filters ephemeral detections, so lowering is cheap.
 constexpr std::array<float, kZyraClassCount> kDefaultClassThresholds = {
-    0.20f,  // 0 pedestrian
+    0.25f,  // 0 pedestrian        (was 0.20 on yolov8n)
     0.25f,  // 1 bicycle
     0.30f,  // 2 car
     0.25f,  // 3 motorcycle
     0.30f,  // 4 bus
     0.30f,  // 5 truck
     0.25f,  // 6 auto_rickshaw (custom models only)
-    0.35f,  // 7 traffic_light
-    0.35f,  // 8 traffic_sign
+    0.40f,  // 7 traffic_light     (was 0.35 on yolov8n)
+    0.40f,  // 8 traffic_sign      (was 0.35 on yolov8n)
 };
 
 // Max detections we surface to Dart in a single frame. Matches the size of
