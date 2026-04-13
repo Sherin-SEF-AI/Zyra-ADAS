@@ -101,6 +101,32 @@ typedef struct ZyraLane {
 
 #define ZYRA_MAX_LANES 8
 
+// Phase 7 — temporal lane tracker output. Polynomial x = a*y^2 + b*y + c
+// over the range [y_top, y_bot] in ORIGINAL image coords.
+typedef struct ZyraLaneCurve {
+  float coeffs[3];      // [a, b, c]
+  float y_top;
+  float y_bot;
+  int32_t side;         // 0 = left, 1 = right, 2 = center (synthesised)
+  float confidence;     // 0..1
+  int32_t locked;       // 1 = tracking, 0 = searching (never emitted when 0)
+  int32_t reserved;     // 8-byte padding for the next array
+} ZyraLaneCurve;
+
+#define ZYRA_MAX_LANE_CURVES 3   // left, right, center
+
+// Phase 7 — Lane Assist state emitted once per frame.
+typedef struct ZyraLaneAssist {
+  int32_t ldw_state;              // 0 DISARMED, 1 ARMED, 2 WARN, 3 ALERT
+  float lateral_offset_px;        // signed — +ve means drifted LEFT
+  float lateral_velocity_px_s;    // signed
+  float ttlc_s;                   // Time To Lane Crossing; +INF if safe
+  float curvature_px;             // signed radius at y_bot; +INF if straight
+  int32_t armed;                  // 1 if ldw_state != DISARMED
+  float dist_to_line_px;          // nearest line distance at bottom; -1 = n/a
+  int32_t drift_side;             // 0 left, 1 right, -1 none
+} ZyraLaneAssist;
+
 typedef struct ZyraDetectionBatch {
   uint64_t frame_id;          // monotonic, set by producer
   double timestamp_ms;        // producer wall-clock (CLOCK_MONOTONIC × 1e3)
@@ -119,6 +145,15 @@ typedef struct ZyraDetectionBatch {
   float lane_ms;              // wall-clock of the lane stage (ms)
   int32_t reserved2;          // 8-byte alignment before the lanes[] block
   ZyraLane lanes[ZYRA_MAX_LANES];
+  // --- Phase 7 advanced lane / lane-assist block ------------------------
+  // Tracked polynomial curves (left, right, center). `curve_count` valid
+  // entries. `tracker_ms` is the wall clock of fit + EMA, separate from
+  // the Hough stage timing above so both can be charted.
+  int32_t curve_count;
+  float tracker_ms;
+  int32_t reserved3;
+  ZyraLaneCurve curves[ZYRA_MAX_LANE_CURVES];
+  ZyraLaneAssist assist;
 } ZyraDetectionBatch;
 
 // Create a new engine. Returns an opaque handle > 0 on success, or 0 on

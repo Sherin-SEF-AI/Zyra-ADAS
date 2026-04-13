@@ -16,8 +16,10 @@ import '../../../core/ffi/zyra_engine_provider.dart';
 import '../../../core/permissions/permissions_service.dart';
 import '../../vehicle_select/application/vehicle_profile_notifier.dart';
 import '../../vehicle_select/data/vehicle_profile.dart';
+import 'widgets/advanced_lane_overlay_painter.dart';
 import 'widgets/detection_overlay_painter.dart';
 import 'widgets/fps_bar.dart';
+import 'widgets/lane_assist_hud.dart';
 import 'widgets/lane_overlay_painter.dart';
 import 'widgets/status_bar.dart';
 
@@ -63,6 +65,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
   ZyraBatch? _latest;
   int _frameId = 0;
   DateTime? _lastSubmit;
+  ZyraLdwState _prevLdw = ZyraLdwState.disarmed;
 
   @override
   void initState() {
@@ -178,8 +181,26 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
       final ZyraEngine? eng = ref.read(zyraEngineProvider).valueOrNull;
       if (eng == null || !mounted) return;
       final ZyraBatch? b = eng.pollDetections();
-      if (b != null) setState(() => _latest = b);
+      if (b != null) {
+        _maybeHaptic(b.assist.state);
+        setState(() => _latest = b);
+      }
     });
+  }
+
+  /// Fire a short haptic buzz on rising LDW transitions — once per
+  /// DISARMED/ARMED → WARN, and a heavier pulse on WARN → ALERT. We
+  /// deliberately don't re-fire while staying in the same state, else the
+  /// phone would vibrate at every frame.
+  void _maybeHaptic(ZyraLdwState next) {
+    if (next == _prevLdw) return;
+    final ZyraLdwState prev = _prevLdw;
+    _prevLdw = next;
+    if (next == ZyraLdwState.alert && prev != ZyraLdwState.alert) {
+      HapticFeedback.heavyImpact();
+    } else if (next == ZyraLdwState.warn && prev == ZyraLdwState.armed) {
+      HapticFeedback.mediumImpact();
+    }
   }
 
   Future<void> _stopAndDisposeCamera() async {
@@ -492,11 +513,24 @@ class _LiveView extends StatelessWidget {
               fit: StackFit.expand,
               children: <Widget>[
                 CameraPreview(c),
-                // Lanes rendered under bboxes so object boxes win occlusion
-                // if they overlap the painted Hough segments.
+                // Raw Hough segments — kept as a faint debug under-layer so
+                // the tracker's smoothed curves can be visually compared
+                // against the raw detector output.
                 Positioned.fill(
                   child: CustomPaint(
                     painter: LaneOverlayPainter(
+                      batch: latest,
+                      sensorWidth: preview.width,
+                      sensorHeight: preview.height,
+                      sensorOrientation: sensorOrientation,
+                      mirror: isFront,
+                    ),
+                  ),
+                ),
+                // Phase 7 — smoothed polynomial lane curves + drift wedge.
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: AdvancedLaneOverlayPainter(
                       batch: latest,
                       sensorWidth: preview.width,
                       sensorHeight: preview.height,
@@ -532,6 +566,12 @@ class _LiveView extends StatelessWidget {
               vulkanActive: engine.vulkanActive == 1,
               vehicleName: profile.displayName,
             ),
+          ),
+        ),
+        Positioned.fill(
+          child: SafeArea(
+            bottom: false,
+            child: LaneAssistHud(batch: latest),
           ),
         ),
         Positioned(

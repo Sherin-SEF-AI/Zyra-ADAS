@@ -8,6 +8,9 @@ const int kZyraMaxDetections = 64;
 /// Matches `ZYRA_MAX_LANES` in cpp/include/zyra/ffi_api.h.
 const int kZyraMaxLanes = 8;
 
+/// Matches `ZYRA_MAX_LANE_CURVES` (left / right / center).
+const int kZyraMaxLaneCurves = 3;
+
 /// dart:ffi struct mirroring `ZyraDetection` in cpp/include/zyra/ffi_api.h.
 /// Layout MUST stay in sync — the native code copies into this buffer by
 /// absolute offset.
@@ -40,6 +43,46 @@ final class ZyraLaneStruct extends ffi.Struct {
   external int side; // 0 = left, 1 = right
   @ffi.Float()
   external double confidence;
+}
+
+/// Phase 7 — polynomial lane curve. Mirrors `ZyraLaneCurve` in ffi_api.h.
+/// coeffs laid out as [a, b, c] with x = a*y^2 + b*y + c in original image
+/// space.
+final class ZyraLaneCurveStruct extends ffi.Struct {
+  @ffi.Array(3)
+  external ffi.Array<ffi.Float> coeffs;
+  @ffi.Float()
+  external double yTop;
+  @ffi.Float()
+  external double yBot;
+  @ffi.Int32()
+  external int side;
+  @ffi.Float()
+  external double confidence;
+  @ffi.Int32()
+  external int locked;
+  @ffi.Int32()
+  external int reserved;
+}
+
+/// Phase 7 — Lane Assist snapshot. Mirrors `ZyraLaneAssist` in ffi_api.h.
+final class ZyraLaneAssistStruct extends ffi.Struct {
+  @ffi.Int32()
+  external int ldwState;
+  @ffi.Float()
+  external double lateralOffsetPx;
+  @ffi.Float()
+  external double lateralVelocityPxS;
+  @ffi.Float()
+  external double ttlcS;
+  @ffi.Float()
+  external double curvaturePx;
+  @ffi.Int32()
+  external int armed;
+  @ffi.Float()
+  external double distToLinePx;
+  @ffi.Int32()
+  external int driftSide;
 }
 
 /// dart:ffi struct mirroring `ZyraDetectionBatch`. The fixed-size array is
@@ -80,6 +123,16 @@ final class ZyraDetectionBatchStruct extends ffi.Struct {
   external int reserved2;
   @ffi.Array(kZyraMaxLanes)
   external ffi.Array<ZyraLaneStruct> lanes;
+  // Phase 7 — tracker + assist block. Must remain in this order.
+  @ffi.Int32()
+  external int curveCount;
+  @ffi.Float()
+  external double trackerMs;
+  @ffi.Int32()
+  external int reserved3;
+  @ffi.Array(kZyraMaxLaneCurves)
+  external ffi.Array<ZyraLaneCurveStruct> curves;
+  external ZyraLaneAssistStruct assist;
 }
 
 /// Immutable Dart-side detection. Returned by `ZyraEngine.pollDetections()`.
@@ -132,6 +185,93 @@ class ZyraLane {
   bool get isRight => side == 1;
 }
 
+/// Phase 7 — polynomial lane curve: x = a*y^2 + b*y + c. Side is
+/// 0 = left, 1 = right, 2 = center (synthesised by the tracker).
+class ZyraLaneCurve {
+  const ZyraLaneCurve({
+    required this.a,
+    required this.b,
+    required this.c,
+    required this.yTop,
+    required this.yBot,
+    required this.side,
+    required this.confidence,
+    required this.locked,
+  });
+
+  final double a;
+  final double b;
+  final double c;
+  final double yTop;
+  final double yBot;
+  final int side;
+  final double confidence;
+  final bool locked;
+
+  bool get isLeft => side == 0;
+  bool get isRight => side == 1;
+  bool get isCenter => side == 2;
+
+  /// Evaluate x at a given y.
+  double xAt(double y) => a * y * y + b * y + c;
+}
+
+/// Phase 7 — Lane Departure Warning state.
+enum ZyraLdwState { disarmed, armed, warn, alert }
+
+/// Phase 7 — Lane Assist snapshot for the current frame.
+class ZyraLaneAssist {
+  const ZyraLaneAssist({
+    required this.state,
+    required this.lateralOffsetPx,
+    required this.lateralVelocityPxS,
+    required this.ttlcS,
+    required this.curvaturePx,
+    required this.armed,
+    required this.distToLinePx,
+    required this.driftSide,
+  });
+
+  final ZyraLdwState state;
+  final double lateralOffsetPx;
+  final double lateralVelocityPxS;
+
+  /// Time To Lane Crossing. `double.infinity` if safe, low values
+  /// indicate imminent departure.
+  final double ttlcS;
+
+  /// Signed radius of curvature at the bottom of the image, pixel
+  /// units. Positive curves right, negative left. `double.infinity`
+  /// when straight.
+  final double curvaturePx;
+
+  final bool armed;
+
+  /// Distance to the nearest lane line at the bottom of the image,
+  /// in pixels. -1 if unknown.
+  final double distToLinePx;
+
+  /// 0 drifting toward left line, 1 toward right, -1 none.
+  final int driftSide;
+
+  bool get isWarning => state == ZyraLdwState.warn;
+  bool get isAlert => state == ZyraLdwState.alert;
+}
+
+ZyraLdwState zyraLdwFromInt(int v) {
+  switch (v) {
+    case 1:
+      return ZyraLdwState.armed;
+    case 2:
+      return ZyraLdwState.warn;
+    case 3:
+      return ZyraLdwState.alert;
+    case 0:
+    default:
+      return ZyraLdwState.disarmed;
+  }
+}
+
 /// A snapshot of inference output for a single frame. Returned by
 /// `ZyraEngine.pollDetections()`.
 class ZyraBatch {
@@ -148,6 +288,9 @@ class ZyraBatch {
     required this.detections,
     required this.lanes,
     required this.laneMs,
+    required this.curves,
+    required this.trackerMs,
+    required this.assist,
   });
 
   final int frameId;
@@ -165,7 +308,17 @@ class ZyraBatch {
   /// Wall-clock of the lane stage (classical Hough) in milliseconds.
   final double laneMs;
 
-  double get totalMs => preprocessMs + inferMs + nmsMs + laneMs;
+  /// Phase 7 — smoothed polynomial curves (left / right / center).
+  final List<ZyraLaneCurve> curves;
+
+  /// Wall-clock of the tracker (poly fit + EMA) stage in milliseconds.
+  final double trackerMs;
+
+  /// Phase 7 — Lane Assist snapshot for this frame.
+  final ZyraLaneAssist assist;
+
+  double get totalMs =>
+      preprocessMs + inferMs + nmsMs + laneMs + trackerMs;
 }
 
 /// Allocate a batch struct buffer suitable for passing to

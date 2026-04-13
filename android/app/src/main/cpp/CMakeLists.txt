@@ -75,6 +75,8 @@ set(ZYRA_SOURCES
     src/preprocess.cpp
     src/nms.cpp
     src/lane.cpp
+    src/lane_tracker.cpp
+    src/lane_assist.cpp
 )
 
 add_library(zyra_perception SHARED ${ZYRA_SOURCES})

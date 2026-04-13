@@ -20,6 +20,8 @@
 #include "zyra/detector.h"
 #include "zyra/ffi_api.h"  // ZyraDetectionBatch
 #include "zyra/lane.h"
+#include "zyra/lane_assist.h"
+#include "zyra/lane_tracker.h"
 
 namespace zyra {
 
@@ -82,6 +84,8 @@ class PerceptionEngine {
 
   NcnnYoloV8Detector detector_;
   HoughLaneDetector lane_detector_;
+  LaneTracker lane_tracker_;
+  LaneAssist lane_assist_;
   std::thread worker_;
   std::atomic<bool> stop_{false};
   std::atomic<bool> loaded_{false};

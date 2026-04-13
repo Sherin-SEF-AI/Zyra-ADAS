@@ -342,6 +342,34 @@ class ZyraEngine {
       );
     });
 
+    final int cc = b.curveCount.clamp(0, kZyraMaxLaneCurves);
+    final List<ZyraLaneCurve> curves =
+        List<ZyraLaneCurve>.generate(cc, (int i) {
+      final ZyraLaneCurveStruct lc = b.curves[i];
+      return ZyraLaneCurve(
+        a: lc.coeffs[0],
+        b: lc.coeffs[1],
+        c: lc.coeffs[2],
+        yTop: lc.yTop,
+        yBot: lc.yBot,
+        side: lc.side,
+        confidence: lc.confidence,
+        locked: lc.locked != 0,
+      );
+    });
+
+    final ZyraLaneAssistStruct a = b.assist;
+    final ZyraLaneAssist assist = ZyraLaneAssist(
+      state: zyraLdwFromInt(a.ldwState),
+      lateralOffsetPx: a.lateralOffsetPx,
+      lateralVelocityPxS: a.lateralVelocityPxS,
+      ttlcS: a.ttlcS,
+      curvaturePx: a.curvaturePx,
+      armed: a.armed != 0,
+      distToLinePx: a.distToLinePx,
+      driftSide: a.driftSide,
+    );
+
     return ZyraBatch(
       frameId: b.frameId,
       timestampMs: b.timestampMs,
@@ -355,6 +383,9 @@ class ZyraEngine {
       detections: dets,
       lanes: lanes,
       laneMs: b.laneMs,
+      curves: curves,
+      trackerMs: b.trackerMs,
+      assist: assist,
     );
   }
 

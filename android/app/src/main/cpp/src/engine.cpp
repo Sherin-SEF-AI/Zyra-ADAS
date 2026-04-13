@@ -222,6 +222,15 @@ void PerceptionEngine::worker_loop_() {
       lanes.clear();
     }
 
+    // --- Phase 7: temporal tracker + lane assist. ------------------------
+    try {
+      lane_tracker_.update(lanes, p.width, p.height);
+      lane_assist_.update(lane_tracker_, p.width, p.height);
+    } catch (...) {
+      ZYRA_LOGE("lane tracker/assist threw on frame %llu",
+                static_cast<unsigned long long>(p.frame_id));
+    }
+
     // --- Publish the batch. ---------------------------------------------
     ZyraDetectionBatch batch{};
     batch.frame_id = p.frame_id;
@@ -252,6 +261,33 @@ void PerceptionEngine::worker_loop_() {
           lanes[i].side, lanes[i].confidence,
       };
     }
+
+    // Phase 7 — tracker curves + assist state.
+    const auto& tracked = lane_tracker_.curves();
+    const int cc = std::min<int>(static_cast<int>(tracked.size()),
+                                 ZYRA_MAX_LANE_CURVES);
+    batch.curve_count = cc;
+    batch.tracker_ms = lane_tracker_.last_ms();
+    for (int i = 0; i < cc; ++i) {
+      batch.curves[i].coeffs[0] = tracked[i].coeffs[0];
+      batch.curves[i].coeffs[1] = tracked[i].coeffs[1];
+      batch.curves[i].coeffs[2] = tracked[i].coeffs[2];
+      batch.curves[i].y_top = tracked[i].y_top;
+      batch.curves[i].y_bot = tracked[i].y_bot;
+      batch.curves[i].side = tracked[i].side;
+      batch.curves[i].confidence = tracked[i].confidence;
+      batch.curves[i].locked = tracked[i].locked;
+      batch.curves[i].reserved = 0;
+    }
+    const auto& st = lane_assist_.state();
+    batch.assist.ldw_state = st.ldw_state;
+    batch.assist.lateral_offset_px = st.lateral_offset_px;
+    batch.assist.lateral_velocity_px_s = st.lateral_velocity_px_s;
+    batch.assist.ttlc_s = st.ttlc_s;
+    batch.assist.curvature_px = st.curvature_px;
+    batch.assist.armed = st.armed;
+    batch.assist.dist_to_line_px = st.dist_to_line_px;
+    batch.assist.drift_side = st.drift_side;
 
     {
       std::lock_guard<std::mutex> lk(result_mu_);
