@@ -72,9 +72,16 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WakelockPlus.enable();
+    // Drive screen locks to landscape-left. Landscape gives a wider
+    // horizontal FoV on the camera (useful for catching merging traffic
+    // and full lane boundaries) and a dashboard-style HUD layout.
     SystemChrome.setPreferredOrientations(<DeviceOrientation>[
-      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
     ]);
+    SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.immersiveSticky,
+      overlays: <SystemUiOverlay>[],
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _requestPermissions());
   }
 
@@ -85,6 +92,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     _stopAndDisposeCamera();
     WakelockPlus.disable();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     super.dispose();
   }
 
@@ -496,12 +504,20 @@ class _LiveView extends StatelessWidget {
     final bool isFront = camera?.lensDirection == CameraLensDirection.front;
     final AdasColors adas = Theme.of(context).extension<AdasColors>()!;
 
-    // controller.value.aspectRatio is w/h of the sensor frame; for portrait
-    // display we swap.
-    final double displayAspect =
-        (sensorOrientation == 90 || sensorOrientation == 270)
-            ? preview.height / preview.width
-            : preview.width / preview.height;
+    // Drive screen is locked to DeviceOrientation.landscapeLeft which rotates
+    // the display 90° relative to the phone's portrait-up orientation. The
+    // painters' rotation math is authored against a portrait display, so we
+    // subtract 90° up front: back-camera sensors (sensorOrientation == 90)
+    // then need no further rotation, matching the physical reality that the
+    // sensor's native frame is already landscape.
+    const int displayRotationDeg = 90;
+    final int effectiveSensorOrientation =
+        (sensorOrientation - displayRotationDeg + 360) % 360;
+    final bool landscapeSensorToLandscapeDisplay =
+        effectiveSensorOrientation == 0 || effectiveSensorOrientation == 180;
+    final double displayAspect = landscapeSensorToLandscapeDisplay
+        ? preview.width / preview.height
+        : preview.height / preview.width;
 
     return Stack(
       fit: StackFit.expand,
@@ -522,7 +538,7 @@ class _LiveView extends StatelessWidget {
                       batch: latest,
                       sensorWidth: preview.width,
                       sensorHeight: preview.height,
-                      sensorOrientation: sensorOrientation,
+                      sensorOrientation: effectiveSensorOrientation,
                       mirror: isFront,
                     ),
                   ),
@@ -534,7 +550,7 @@ class _LiveView extends StatelessWidget {
                       batch: latest,
                       sensorWidth: preview.width,
                       sensorHeight: preview.height,
-                      sensorOrientation: sensorOrientation,
+                      sensorOrientation: effectiveSensorOrientation,
                       mirror: isFront,
                     ),
                   ),
@@ -545,7 +561,7 @@ class _LiveView extends StatelessWidget {
                       batch: latest,
                       sensorWidth: preview.width,
                       sensorHeight: preview.height,
-                      sensorOrientation: sensorOrientation,
+                      sensorOrientation: effectiveSensorOrientation,
                       adas: adas,
                       mirror: isFront,
                     ),
