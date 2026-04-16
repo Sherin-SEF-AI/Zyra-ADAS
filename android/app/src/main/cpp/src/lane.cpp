@@ -91,36 +91,34 @@ std::vector<Lane> HoughLaneDetector::detect(const uint8_t* y, int width,
   if (y == nullptr || width <= 0 || height <= 0) return out;
 
   // --- Wrap Y plane as an OpenCV Mat (no copy). ----------------------------
-  // `y_row_stride` may exceed `width` when the hardware uses padded rows —
-  // cv::Mat's step argument handles this directly.
   cv::Mat full(height, width, CV_8UC1,
                const_cast<uint8_t*>(y),
                static_cast<size_t>(y_row_stride));
 
   // --- Downsample to a fixed processing resolution. ------------------------
-  // Tie processing_height to the input aspect so the ROI polygon stays
-  // geometrically consistent.
   const int proc_w = processing_width_;
   const int proc_h = std::max(
       1, static_cast<int>(std::round(proc_w * static_cast<double>(height) /
                                      static_cast<double>(width))));
-  cv::Mat small;
-  cv::resize(full, small, cv::Size(proc_w, proc_h), 0, 0, cv::INTER_LINEAR);
 
-  // --- Blur + Canny. -------------------------------------------------------
-  cv::Mat blurred;
-  cv::GaussianBlur(small, blurred, cv::Size(5, 5), 0);
-  cv::Mat edges;
-  cv::Canny(blurred, edges, canny_low_, canny_high_);
+  // Cache the ROI mask — it only depends on (proc_w, proc_h) which are
+  // constant across frames. Avoids re-building + fillPoly on every call.
+  if (roi_cache_.empty() || roi_cache_.cols != proc_w ||
+      roi_cache_.rows != proc_h) {
+    roi_cache_ = build_roi_mask(proc_w, proc_h);
+  }
 
-  // --- ROI mask. -----------------------------------------------------------
-  cv::Mat mask = build_roi_mask(proc_w, proc_h);
-  cv::Mat edges_roi;
-  cv::bitwise_and(edges, mask, edges_roi);
+  cv::resize(full, small_buf_, cv::Size(proc_w, proc_h), 0, 0,
+             cv::INTER_LINEAR);
+
+  // --- Blur + Canny (reuse pre-allocated Mats). ----------------------------
+  cv::GaussianBlur(small_buf_, blur_buf_, cv::Size(5, 5), 0);
+  cv::Canny(blur_buf_, edges_buf_, canny_low_, canny_high_);
+  cv::bitwise_and(edges_buf_, roi_cache_, roi_buf_);
 
   // --- Probabilistic Hough. ------------------------------------------------
   std::vector<cv::Vec4i> segs;
-  cv::HoughLinesP(edges_roi, segs, 1.0, CV_PI / 180.0, hough_threshold_,
+  cv::HoughLinesP(roi_buf_, segs, 1.0, CV_PI / 180.0, hough_threshold_,
                   static_cast<double>(min_line_length_),
                   static_cast<double>(max_line_gap_));
 

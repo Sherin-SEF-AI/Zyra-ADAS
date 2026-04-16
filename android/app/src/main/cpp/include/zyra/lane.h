@@ -24,6 +24,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <opencv2/core.hpp>
+
 namespace zyra {
 
 struct Lane {
@@ -59,8 +61,8 @@ class HoughLaneDetector {
   float last_ms() const { return last_ms_; }
 
  private:
-  int processing_width_ = 480;
-  int processing_height_ = 270;  // 16:9 target; gets clipped to input aspect
+  int processing_width_ = 320;
+  int processing_height_ = 180;  // 16:9 target; gets clipped to input aspect
 
   // Canny hysteresis thresholds (grayscale 0..255 scale).
   float canny_low_ = 50.0f;
@@ -77,6 +79,13 @@ class HoughLaneDetector {
   float max_abs_slope_ = 4.0f;
 
   float last_ms_ = 0.0f;
+
+  // Pre-allocated buffers to avoid per-frame heap churn.
+  cv::Mat roi_cache_;   // cached ROI mask (rebuilt only on resolution change)
+  cv::Mat small_buf_;   // downsized Y plane
+  cv::Mat blur_buf_;    // after Gaussian blur
+  cv::Mat edges_buf_;   // after Canny
+  cv::Mat roi_buf_;     // edges & ROI
 };
 
 }  // namespace zyra

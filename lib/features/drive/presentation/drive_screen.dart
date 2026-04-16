@@ -24,7 +24,6 @@ import 'widgets/detection_overlay_painter.dart';
 import 'widgets/fcw_banner.dart';
 import 'widgets/fps_bar.dart';
 import 'widgets/lane_assist_hud.dart';
-import 'widgets/lane_overlay_painter.dart';
 import 'widgets/shadow_l2_badge.dart';
 import 'widgets/speed_hud.dart';
 import 'widgets/status_bar.dart';
@@ -56,7 +55,10 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
   /// can deliver at 60 FPS on some devices — we throttle to ~30 to avoid
   /// burning CPU on copies we'll never use. Native inference is throttled
   /// independently by the engine's worker thread.
-  static const Duration _submitMinInterval = Duration(milliseconds: 33);
+  /// Throttle to ~20 FPS on the submission side. The native worker thread
+  /// drops queued frames anyway, so submitting faster than inference can
+  /// process just wastes CPU on copies.
+  static const Duration _submitMinInterval = Duration(milliseconds: 50);
 
   DrivePermissionResult? _permissionResult;
   bool _requestingPermissions = false;
@@ -70,6 +72,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
   Timer? _pollTimer;
   Timer? _egoTimer;
   ZyraBatch? _latest;
+  EgoState _ego = const EgoState();
   int _frameId = 0;
   DateTime? _lastSubmit;
   ZyraLdwState _prevLdw = ZyraLdwState.disarmed;
@@ -233,7 +236,12 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
       if (b != null) {
         _maybeHaptic(b.assist.state);
         _maybeFcwHaptic(b.fcw.state);
-        setState(() => _latest = b);
+        setState(() {
+          _latest = b;
+          // Snapshot ego state on the same tick — avoids a separate
+          // provider watch that would cause extra rebuilds.
+          _ego = ref.read(egoStateProvider);
+        });
       }
     });
     // Phase 11 — push ego state into the engine at ~1 Hz.
@@ -446,7 +454,6 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     final AsyncValue<VehicleProfile?> profileAsync =
         ref.watch(vehicleProfileProvider);
     final AsyncValue<ZyraEngine> engineAsync = ref.watch(zyraEngineProvider);
-    final EgoState ego = ref.watch(egoStateProvider);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -500,7 +507,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
             engineAsync: engineAsync,
             latest: _latest,
             profile: profile,
-            ego: ego,
+            ego: _ego,
           );
         },
       ),
@@ -604,49 +611,39 @@ class _LiveView extends StatelessWidget {
         Center(
           child: AspectRatio(
             aspectRatio: displayAspect,
-            child: Stack(
-              fit: StackFit.expand,
-              children: <Widget>[
-                CameraPreview(c),
-                // Raw Hough segments — kept as a faint debug under-layer so
-                // the tracker's smoothed curves can be visually compared
-                // against the raw detector output.
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: LaneOverlayPainter(
-                      batch: latest,
-                      sensorWidth: preview.width,
-                      sensorHeight: preview.height,
-                      sensorOrientation: effectiveSensorOrientation,
-                      mirror: isFront,
+            child: RepaintBoundary(
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  CameraPreview(c),
+                  // Phase 7 — smoothed polynomial lane curves + drift wedge.
+                  // Raw Hough segments removed (redundant with tracker curves
+                  // and cost an extra paint pass).
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: AdvancedLaneOverlayPainter(
+                        batch: latest,
+                        sensorWidth: preview.width,
+                        sensorHeight: preview.height,
+                        sensorOrientation: effectiveSensorOrientation,
+                        mirror: isFront,
+                      ),
                     ),
                   ),
-                ),
-                // Phase 7 — smoothed polynomial lane curves + drift wedge.
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: AdvancedLaneOverlayPainter(
-                      batch: latest,
-                      sensorWidth: preview.width,
-                      sensorHeight: preview.height,
-                      sensorOrientation: effectiveSensorOrientation,
-                      mirror: isFront,
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: DetectionOverlayPainter(
+                        batch: latest,
+                        sensorWidth: preview.width,
+                        sensorHeight: preview.height,
+                        sensorOrientation: effectiveSensorOrientation,
+                        adas: adas,
+                        mirror: isFront,
+                      ),
                     ),
                   ),
-                ),
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: DetectionOverlayPainter(
-                      batch: latest,
-                      sensorWidth: preview.width,
-                      sensorHeight: preview.height,
-                      sensorOrientation: effectiveSensorOrientation,
-                      adas: adas,
-                      mirror: isFront,
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

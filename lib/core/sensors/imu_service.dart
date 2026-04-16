@@ -52,10 +52,10 @@ class _ImuFusion {
 
   void _start() {
     _accelSub = accelerometerEventStream(
-      samplingPeriod: const Duration(milliseconds: 20),
+      samplingPeriod: const Duration(milliseconds: 40),
     ).listen(_onAccel);
     _gyroSub = gyroscopeEventStream(
-      samplingPeriod: const Duration(milliseconds: 20),
+      samplingPeriod: const Duration(milliseconds: 40),
     ).listen(_onGyro);
 
     _controller.onCancel = _dispose;
