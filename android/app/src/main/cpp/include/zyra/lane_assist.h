@@ -53,8 +53,11 @@ class LaneAssist {
 
   // `ipm` may be null — world-space fields are set to NaN in that
   // case, but pixel-space behaviour is unchanged.
+  // Phase 11: `ego_speed_mps` gates LDW below 30 km/h; `yaw_rate_deg_s`
+  // suppresses WARN/ALERT during intentional turns (> 3°/s).
   void update(const LaneTracker& tracker, int frame_width, int frame_height,
-              const Ipm* ipm);
+              const Ipm* ipm,
+              float ego_speed_mps = 0.0f, float yaw_rate_deg_s = 0.0f);
 
   const LaneAssistState& state() const { return state_; }
 

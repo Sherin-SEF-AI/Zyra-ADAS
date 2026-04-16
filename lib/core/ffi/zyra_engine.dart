@@ -84,6 +84,10 @@ typedef _EngineSetCameraGeometryC = ffi.Int32 Function(
 typedef _EngineSetCameraGeometryD = int Function(
     int, double, double, double, int, int);
 
+typedef _EngineSetEgoStateC = ffi.Int32 Function(
+    ffi.Int64, ffi.Float, ffi.Float, ffi.Float);
+typedef _EngineSetEgoStateD = int Function(int, double, double, double);
+
 // -----------------------------------------------------------------------------
 
 /// Thin wrapper around the Phase 4 C engine API. Owns an opaque native handle.
@@ -137,7 +141,11 @@ class ZyraEngine {
         _setCameraGeometry = lib
             .lookup<ffi.NativeFunction<_EngineSetCameraGeometryC>>(
                 'zyra_engine_set_camera_geometry')
-            .asFunction<_EngineSetCameraGeometryD>() {
+            .asFunction<_EngineSetCameraGeometryD>(),
+        _setEgoState = lib
+            .lookup<ffi.NativeFunction<_EngineSetEgoStateC>>(
+                'zyra_engine_set_ego_state')
+            .asFunction<_EngineSetEgoStateD>() {
     _batchBuffer = allocateBatchBuffer();
   }
 
@@ -165,6 +173,7 @@ class ZyraEngine {
   final _EngineAvgFpsD _avgFps;
   final _EngineIsVulkanD _isVulkanActive;
   final _EngineSetCameraGeometryD _setCameraGeometry;
+  final _EngineSetEgoStateD _setEgoState;
 
   late final ffi.Pointer<ZyraDetectionBatchStruct> _batchBuffer;
   bool _disposed = false;
@@ -242,6 +251,17 @@ class ZyraEngine {
     if (rc != 0) {
       throw ZyraEngineException('set_camera_geometry failed (code $rc)');
     }
+  }
+
+  /// Phase 11 — push ego-vehicle state (GPS speed, IMU pitch, yaw rate)
+  /// into the engine for speed-gated warnings. Called at ~1 Hz.
+  void setEgoState({
+    required double speedMps,
+    required double pitchDeg,
+    required double yawRateDegPerS,
+  }) {
+    _ensureAlive();
+    _setEgoState(handle, speedMps, pitchDeg, yawRateDegPerS);
   }
 
   /// Average completed inference FPS over the trailing ~1 s window.
@@ -450,6 +470,9 @@ class ZyraEngine {
       objectTrackerMs: b.objectTrackerMs,
       fcwMs: b.fcwMs,
       fcw: fcw,
+      egoSpeedMps: b.egoSpeedMps,
+      egoPitchDeg: b.egoPitchDeg,
+      egoYawRateDegS: b.egoYawRateDegS,
     );
   }
 

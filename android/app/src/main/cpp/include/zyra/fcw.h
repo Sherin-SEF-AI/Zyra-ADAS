@@ -54,9 +54,12 @@ class ForwardCollisionWarning {
   // may be null (uncalibrated) — TTC then falls back to bbox-height-rate.
   // `now_ms` is the wall clock of this frame (same clock the tracker
   // sees) and feeds per-track range-rate smoothing.
+  // `ego_speed_mps` is 0 when GPS is unavailable. Below 15 km/h (~4.17
+  // m/s) CAUTION is suppressed; TTC thresholds scale down at low speeds.
   void update(const std::vector<TrackedObject>& tracks,
               int frame_w, int frame_h,
-              const Ipm* ipm, double now_ms);
+              const Ipm* ipm, double now_ms,
+              float ego_speed_mps = 0.0f);
 
   const FcwSnapshot& state() const { return state_; }
 

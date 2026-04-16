@@ -24,8 +24,10 @@ dependencies:
   path_provider: ^2.1.4
   wakelock_plus: ^1.2.10
 
-  # Camera / sensors (used in later phases)
+  # Camera / sensors
   camera: ^0.11.0+2
+  geolocator: ^13.0.2
+  sensors_plus: ^6.1.1
 
   # Native bridge
   ffi: ^2.1.3

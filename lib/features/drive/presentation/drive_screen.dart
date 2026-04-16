@@ -15,6 +15,7 @@ import '../../../core/ffi/zyra_detection.dart';
 import '../../../core/ffi/zyra_engine.dart';
 import '../../../core/ffi/zyra_engine_provider.dart';
 import '../../../core/permissions/permissions_service.dart';
+import '../../../core/sensors/ego_state.dart';
 import '../../vehicle_select/application/vehicle_profile_notifier.dart';
 import '../../vehicle_select/data/vehicle_profile.dart';
 import 'widgets/advanced_lane_overlay_painter.dart';
@@ -23,6 +24,7 @@ import 'widgets/fcw_banner.dart';
 import 'widgets/fps_bar.dart';
 import 'widgets/lane_assist_hud.dart';
 import 'widgets/lane_overlay_painter.dart';
+import 'widgets/speed_hud.dart';
 import 'widgets/status_bar.dart';
 
 /// Phase 5 — live camera preview + real-time YOLOv8 detection overlay.
@@ -64,6 +66,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
   bool _streamStarted = false;
 
   Timer? _pollTimer;
+  Timer? _egoTimer;
   ZyraBatch? _latest;
   int _frameId = 0;
   DateTime? _lastSubmit;
@@ -92,6 +95,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
+    _egoTimer?.cancel();
     _stopAndDisposeCamera();
     WakelockPlus.disable();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -229,6 +233,18 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
         _maybeFcwHaptic(b.fcw.state);
         setState(() => _latest = b);
       }
+    });
+    // Phase 11 — push ego state into the engine at ~1 Hz.
+    _egoTimer?.cancel();
+    _egoTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final ZyraEngine? eng = ref.read(zyraEngineProvider).valueOrNull;
+      if (eng == null || !mounted) return;
+      final EgoState ego = ref.read(egoStateProvider);
+      eng.setEgoState(
+        speedMps: ego.speedMps,
+        pitchDeg: ego.pitchDeg,
+        yawRateDegPerS: ego.yawRateDegPerS,
+      );
     });
   }
 
@@ -425,6 +441,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     final AsyncValue<VehicleProfile?> profileAsync =
         ref.watch(vehicleProfileProvider);
     final AsyncValue<ZyraEngine> engineAsync = ref.watch(zyraEngineProvider);
+    final EgoState ego = ref.watch(egoStateProvider);
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -478,6 +495,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
             engineAsync: engineAsync,
             latest: _latest,
             profile: profile,
+            ego: ego,
           );
         },
       ),
@@ -497,6 +515,7 @@ class _LiveView extends StatelessWidget {
     required this.engineAsync,
     required this.latest,
     required this.profile,
+    required this.ego,
   });
 
   final CameraController? controller;
@@ -505,6 +524,7 @@ class _LiveView extends StatelessWidget {
   final AsyncValue<ZyraEngine> engineAsync;
   final ZyraBatch? latest;
   final VehicleProfile profile;
+  final EgoState ego;
 
   @override
   Widget build(BuildContext context) {
@@ -663,6 +683,16 @@ class _LiveView extends StatelessWidget {
               totalMs: latest?.totalMs ?? 0,
               inferMs: latest?.inferMs ?? 0,
             ),
+          ),
+        ),
+        // Phase 11 — speed readout, bottom-left.
+        Positioned(
+          bottom: 40,
+          left: 12,
+          child: SafeArea(
+            top: false,
+            right: false,
+            child: SpeedHud(ego: ego),
           ),
         ),
       ],

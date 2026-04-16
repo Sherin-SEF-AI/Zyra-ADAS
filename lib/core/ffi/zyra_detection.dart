@@ -198,6 +198,15 @@ final class ZyraDetectionBatchStruct extends ffi.Struct {
   @ffi.Array(kZyraMaxTracks)
   external ffi.Array<ZyraTrackStruct> tracks;
   external ZyraFcwStruct fcw;
+  // Phase 11 — ego-state echo.
+  @ffi.Float()
+  external double egoSpeedMps;
+  @ffi.Float()
+  external double egoPitchDeg;
+  @ffi.Float()
+  external double egoYawRateDegS;
+  @ffi.Int32()
+  external int reserved5;
 }
 
 /// Immutable Dart-side detection. Returned by `ZyraEngine.pollDetections()`.
@@ -463,6 +472,9 @@ class ZyraBatch {
     required this.objectTrackerMs,
     required this.fcwMs,
     required this.fcw,
+    required this.egoSpeedMps,
+    required this.egoPitchDeg,
+    required this.egoYawRateDegS,
   });
 
   final int frameId;
@@ -501,6 +513,13 @@ class ZyraBatch {
 
   /// Phase 8 — Forward Collision Warning snapshot for this frame.
   final ZyraFcw fcw;
+
+  /// Phase 11 — ego-state echo: the speed the engine used for gating.
+  final double egoSpeedMps;
+  final double egoPitchDeg;
+  final double egoYawRateDegS;
+
+  double get egoSpeedKmh => egoSpeedMps * 3.6;
 
   double get totalMs =>
       preprocessMs +

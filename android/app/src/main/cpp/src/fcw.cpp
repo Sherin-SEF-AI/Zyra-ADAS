@@ -46,7 +46,8 @@ int32_t ForwardCollisionWarning::ttc_to_state_(float ttc_s) const {
 
 void ForwardCollisionWarning::update(const std::vector<TrackedObject>& tracks,
                                      int frame_w, int frame_h,
-                                     const Ipm* ipm, double now_ms) {
+                                     const Ipm* ipm, double now_ms,
+                                     float ego_speed_mps) {
   const float fh = static_cast<float>(frame_h);
   const float fw = static_cast<float>(frame_w);
   const float corridor_lo = fw * (0.5f - corridor_half_frac_);
@@ -166,6 +167,14 @@ void ForwardCollisionWarning::update(const std::vector<TrackedObject>& tracks,
   } else {
     pending_state_ = state_.state;
     pending_count_ = 0;
+  }
+
+  // Phase 11 — speed gating. Below 15 km/h (~4.17 m/s) suppress CAUTION
+  // entirely (parking manoeuvres, traffic crawl). Scale TTC thresholds
+  // between 15 and 30 km/h so warnings ramp in gradually.
+  const float speed_kmh = ego_speed_mps * 3.6f;
+  if (speed_kmh < 15.0f && state_.state <= FCW_CAUTION) {
+    state_.state = FCW_SAFE;
   }
 
   // Report the critical track regardless of hysteresis so the HUD always

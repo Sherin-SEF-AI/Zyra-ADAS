@@ -80,6 +80,22 @@ int PerceptionEngine::set_camera_geometry(float mount_h_m, float pitch_deg,
   return 0;
 }
 
+void PerceptionEngine::set_ego_state(float ego_speed_mps, float pitch_deg,
+                                     float yaw_rate_deg_s) {
+  std::lock_guard<std::mutex> lk(ego_mu_);
+  ego_state_.speed_mps = ego_speed_mps;
+  ego_state_.yaw_rate_deg_s = yaw_rate_deg_s;
+  // Update IPM pitch when the change exceeds 0.5° to avoid churn.
+  const float delta = std::abs(pitch_deg - ego_state_.pitch_deg);
+  ego_state_.pitch_deg = pitch_deg;
+  if (delta > 0.5f) {
+    std::lock_guard<std::mutex> ipm_lk(ipm_mu_);
+    if (ipm_.calibrated()) {
+      ipm_.set_pitch(pitch_deg);
+    }
+  }
+}
+
 int PerceptionEngine::vulkan_active() const {
   if (!loaded_.load(std::memory_order_acquire)) return -1;
   return detector_.vulkan_active() ? 1 : 0;
@@ -244,20 +260,28 @@ void PerceptionEngine::worker_loop_() {
     const Ipm* ipm_for_stages =
         ipm_snapshot.calibrated() ? &ipm_snapshot : nullptr;
 
-    // --- Phase 7 / 10: temporal tracker + lane assist. ------------------
+    // --- Phase 11: snapshot ego state once per frame. --------------------
+    EgoState ego_snap;
+    {
+      std::lock_guard<std::mutex> lk(ego_mu_);
+      ego_snap = ego_state_;
+    }
+
+    // --- Phase 7 / 10 / 11: temporal tracker + lane assist. -------------
     try {
       lane_tracker_.update(lanes, p.width, p.height);
-      lane_assist_.update(lane_tracker_, p.width, p.height, ipm_for_stages);
+      lane_assist_.update(lane_tracker_, p.width, p.height, ipm_for_stages,
+                          ego_snap.speed_mps, ego_snap.yaw_rate_deg_s);
     } catch (...) {
       ZYRA_LOGE("lane tracker/assist threw on frame %llu",
                 static_cast<unsigned long long>(p.frame_id));
     }
 
-    // --- Phase 8 / 10: object tracker + forward collision warning. ------
+    // --- Phase 8 / 10 / 11: object tracker + forward collision warning. -
     try {
       object_tracker_.update(dets, p.timestamp_ms);
       fcw_.update(object_tracker_.tracks(), p.width, p.height,
-                  ipm_for_stages, p.timestamp_ms);
+                  ipm_for_stages, p.timestamp_ms, ego_snap.speed_mps);
     } catch (...) {
       ZYRA_LOGE("object tracker / fcw threw on frame %llu",
                 static_cast<unsigned long long>(p.frame_id));
@@ -350,6 +374,12 @@ void PerceptionEngine::worker_loop_() {
     batch.fcw.critical_distance_m = f.critical_distance_m;
     batch.fcw.range_rate_mps = f.range_rate_mps;
     batch.fcw_ms = 0.0f;  // tracker + fcw already budgeted under object_tracker_ms
+
+    // Phase 11 — echo ego state so Dart HUD can read back what the engine
+    // used for speed-gating this frame.
+    batch.ego_speed_mps = ego_snap.speed_mps;
+    batch.ego_pitch_deg = ego_snap.pitch_deg;
+    batch.ego_yaw_rate_deg_s = ego_snap.yaw_rate_deg_s;
 
     {
       std::lock_guard<std::mutex> lk(result_mu_);

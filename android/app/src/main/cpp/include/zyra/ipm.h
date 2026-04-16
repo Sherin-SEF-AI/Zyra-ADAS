@@ -67,6 +67,12 @@ class Ipm {
   bool calibrated() const { return calibrated_; }
   float mount_h_m() const { return mount_h_m_; }
 
+  // Phase 11 — update pitch without re-deriving the focal length.
+  // Call from the IMU sensor path when the device tilt changes.
+  void set_pitch(float pitch_deg) {
+    pitch_rad_ = pitch_deg * kPi_ / 180.0f;
+  }
+
   // Project image pixel (u, v) to the ground plane. Returns {+INF,
   // +INF} if the pixel is at or above the apparent horizon, which is
   // equivalent to "no finite ground intersection". Callers must check

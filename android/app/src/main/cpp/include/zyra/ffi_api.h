@@ -192,6 +192,11 @@ typedef struct ZyraDetectionBatch {
   int32_t reserved4;
   ZyraTrack tracks[ZYRA_MAX_TRACKS];
   ZyraFcw fcw;
+  // --- Phase 11 ego-state echo -------------------------------------------
+  float ego_speed_mps;
+  float ego_pitch_deg;
+  float ego_yaw_rate_deg_s;
+  int32_t reserved5;
 } ZyraDetectionBatch;
 
 // Create a new engine. Returns an opaque handle > 0 on success, or 0 on
@@ -286,6 +291,15 @@ ZYRA_API int32_t zyra_engine_is_vulkan_active(int64_t handle);
 // are the sensor-native landscape dimensions the engine processes. Safe
 // to call before or after `zyra_engine_load_model`; takes effect from
 // the next submitted frame. Returns 0 ok, -1 bad handle, -2 bad inputs.
+// Phase 11 — push ego-vehicle state (GPS speed, IMU pitch, yaw rate) into
+// the engine so speed-gated warnings can suppress false positives at low
+// speed or during intentional turns. Called at ~1 Hz from the Dart sensor
+// layer. Thread-safe. Returns 0 ok, -1 bad handle.
+ZYRA_API int32_t zyra_engine_set_ego_state(int64_t handle,
+                                            float ego_speed_mps,
+                                            float pitch_deg,
+                                            float yaw_rate_deg_s);
+
 ZYRA_API int32_t zyra_engine_set_camera_geometry(int64_t handle,
                                                  float mount_h_m,
                                                  float pitch_deg,

@@ -175,6 +175,16 @@ ZYRA_API int32_t zyra_engine_is_vulkan_active(int64_t handle) {
   return eng->vulkan_active();
 }
 
+ZYRA_API int32_t zyra_engine_set_ego_state(int64_t handle,
+                                            float ego_speed_mps,
+                                            float pitch_deg,
+                                            float yaw_rate_deg_s) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  eng->set_ego_state(ego_speed_mps, pitch_deg, yaw_rate_deg_s);
+  return 0;
+}
+
 ZYRA_API int32_t zyra_engine_set_camera_geometry(int64_t handle,
                                                  float mount_h_m,
                                                  float pitch_deg,

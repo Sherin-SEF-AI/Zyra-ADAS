@@ -33,7 +33,8 @@ LaneAssist::LaneAssist() {
 }
 
 void LaneAssist::update(const LaneTracker& tracker, int frame_width,
-                        int frame_height, const Ipm* ipm) {
+                        int frame_height, const Ipm* ipm,
+                        float ego_speed_mps, float yaw_rate_deg_s) {
   (void)frame_height;
 
   const auto& curves = tracker.curves();
@@ -162,6 +163,16 @@ void LaneAssist::update(const LaneTracker& tracker, int frame_width,
   } else if (state_.ldw_state == ALERT) {
     if (abs_off < clear_px) next = ARMED;
     else if (ttlc > alert_ttlc_s_ * 2.0f) next = WARN;
+  }
+
+  // Phase 11 — speed gating: below 30 km/h force DISARMED (parking,
+  // crawl). Yaw rate > 3°/s blocks WARN/ALERT escalation (intentional
+  // turn; the driver is deliberately crossing the lane line).
+  const float speed_kmh = ego_speed_mps * 3.6f;
+  if (speed_kmh < 30.0f) {
+    next = DISARMED;
+  } else if (std::abs(yaw_rate_deg_s) > 3.0f) {
+    if (next == WARN || next == ALERT) next = ARMED;
   }
 
   state_.ldw_state = next;

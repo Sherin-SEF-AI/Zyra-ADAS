@@ -56,6 +56,10 @@ class PerceptionEngine {
   int set_camera_geometry(float mount_h_m, float pitch_deg, float hfov_deg,
                           int frame_w, int frame_h);
 
+  // Phase 11 — push ego speed + IMU data. Thread-safe, ~1 Hz from Dart.
+  void set_ego_state(float ego_speed_mps, float pitch_deg,
+                     float yaw_rate_deg_s);
+
   // Submit a YUV_420_888 frame. The engine copies what it needs before
   // returning; callers may free plane pointers immediately.
   int submit(const uint8_t* y, const uint8_t* u, const uint8_t* v,
@@ -99,6 +103,15 @@ class PerceptionEngine {
   ForwardCollisionWarning fcw_;
   Ipm ipm_;
   std::mutex ipm_mu_;  // guards ipm_ across set_camera_geometry / worker reads
+
+  // Phase 11 — ego-vehicle state pushed from Dart sensor layer.
+  struct EgoState {
+    float speed_mps = 0.0f;
+    float pitch_deg = 0.0f;
+    float yaw_rate_deg_s = 0.0f;
+  };
+  std::mutex ego_mu_;
+  EgoState ego_state_;
   std::thread worker_;
   std::atomic<bool> stop_{false};
   std::atomic<bool> loaded_{false};
