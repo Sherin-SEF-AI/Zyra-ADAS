@@ -10,6 +10,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../app/routes.dart';
 import '../../../app/theme.dart';
+import '../../../core/audio/alert_audio_service.dart';
 import '../../../core/constants.dart';
 import '../../../core/ffi/zyra_detection.dart';
 import '../../../core/ffi/zyra_engine.dart';
@@ -258,6 +259,7 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     _prevLdw = next;
     if (next == ZyraLdwState.alert && prev != ZyraLdwState.alert) {
       HapticFeedback.heavyImpact();
+      ref.read(alertAudioProvider).playLdwAlert();
     } else if (next == ZyraLdwState.warn && prev == ZyraLdwState.armed) {
       HapticFeedback.mediumImpact();
     }
@@ -276,8 +278,10 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     if (nextRank <= prevRank) return;
     if (next == ZyraFcwState.alert) {
       HapticFeedback.heavyImpact();
+      ref.read(alertAudioProvider).playFcwAlert();
     } else if (next == ZyraFcwState.warn) {
       HapticFeedback.mediumImpact();
+      ref.read(alertAudioProvider).playFcwWarn();
     }
   }
 
