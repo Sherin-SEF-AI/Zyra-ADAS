@@ -79,6 +79,11 @@ typedef _EngineAvgFpsD = double Function(int);
 typedef _EngineIsVulkanC = ffi.Int32 Function(ffi.Int64);
 typedef _EngineIsVulkanD = int Function(int);
 
+typedef _EngineSetCameraGeometryC = ffi.Int32 Function(
+    ffi.Int64, ffi.Float, ffi.Float, ffi.Float, ffi.Int32, ffi.Int32);
+typedef _EngineSetCameraGeometryD = int Function(
+    int, double, double, double, int, int);
+
 // -----------------------------------------------------------------------------
 
 /// Thin wrapper around the Phase 4 C engine API. Owns an opaque native handle.
@@ -128,7 +133,11 @@ class ZyraEngine {
         _isVulkanActive = lib
             .lookup<ffi.NativeFunction<_EngineIsVulkanC>>(
                 'zyra_engine_is_vulkan_active')
-            .asFunction<_EngineIsVulkanD>() {
+            .asFunction<_EngineIsVulkanD>(),
+        _setCameraGeometry = lib
+            .lookup<ffi.NativeFunction<_EngineSetCameraGeometryC>>(
+                'zyra_engine_set_camera_geometry')
+            .asFunction<_EngineSetCameraGeometryD>() {
     _batchBuffer = allocateBatchBuffer();
   }
 
@@ -155,6 +164,7 @@ class ZyraEngine {
   final _EnginePollD _pollDetections;
   final _EngineAvgFpsD _avgFps;
   final _EngineIsVulkanD _isVulkanActive;
+  final _EngineSetCameraGeometryD _setCameraGeometry;
 
   late final ffi.Pointer<ZyraDetectionBatchStruct> _batchBuffer;
   bool _disposed = false;
@@ -213,6 +223,25 @@ class ZyraEngine {
   void setNmsIou(double iou) {
     _ensureAlive();
     _setNmsIou(handle, iou);
+  }
+
+  /// Phase 10 — push the camera geometry the engine needs to project
+  /// pixels onto the road plane. `frameW/H` must be the sensor-native
+  /// (landscape) dimensions the worker processes. Throws if the native
+  /// call rejects the inputs.
+  void setCameraGeometry({
+    required double mountHeightM,
+    required double pitchDeg,
+    required double hfovDeg,
+    required int frameW,
+    required int frameH,
+  }) {
+    _ensureAlive();
+    final int rc = _setCameraGeometry(
+        handle, mountHeightM, pitchDeg, hfovDeg, frameW, frameH);
+    if (rc != 0) {
+      throw ZyraEngineException('set_camera_geometry failed (code $rc)');
+    }
   }
 
   /// Average completed inference FPS over the trailing ~1 s window.
@@ -368,6 +397,8 @@ class ZyraEngine {
       armed: a.armed != 0,
       distToLinePx: a.distToLinePx,
       driftSide: a.driftSide,
+      lateralOffsetM: a.lateralOffsetM,
+      distToLineM: a.distToLineM,
     );
 
     final int tc = b.trackCount.clamp(0, kZyraMaxTracks);
@@ -395,6 +426,8 @@ class ZyraEngine {
       criticalTrackId: fs.criticalTrackId,
       criticalClassId: fs.criticalClassId,
       criticalBboxHFrac: fs.criticalBboxHFrac,
+      criticalDistanceM: fs.criticalDistanceM,
+      rangeRateMps: fs.rangeRateMps,
     );
 
     return ZyraBatch(

@@ -10,6 +10,7 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../../../app/routes.dart';
 import '../../../app/theme.dart';
+import '../../../core/constants.dart';
 import '../../../core/ffi/zyra_detection.dart';
 import '../../../core/ffi/zyra_engine.dart';
 import '../../../core/ffi/zyra_engine_provider.dart';
@@ -171,12 +172,44 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
       }
       _controller = c;
       setState(() => _cameraError = null);
+      // Phase 10 — push mount geometry now that we know the sensor
+      // resolution. IPM needs sensor-native landscape dims, which
+      // previewSize already reports in landscape on back cameras.
+      unawaited(_pushCameraGeometry());
       _attachStream(c);
     } catch (e) {
       if (!mounted) return;
       setState(() => _cameraError = e);
     } finally {
       _initialisingCamera = false;
+    }
+  }
+
+  /// Push the camera mount + optics geometry into the native engine so the
+  /// IPM module can project pixels onto the road plane. No-op if any of
+  /// the inputs (camera size, vehicle profile, engine handle) is still
+  /// loading — the call is idempotent so it's safe to call again once
+  /// things settle.
+  Future<void> _pushCameraGeometry() async {
+    final CameraController? c = _controller;
+    if (c == null || !c.value.isInitialized) return;
+    final Size? preview = c.value.previewSize;
+    if (preview == null) return;
+    final VehicleProfile? profile =
+        ref.read(vehicleProfileProvider).valueOrNull;
+    if (profile == null) return;
+    try {
+      final ZyraEngine engine = await ref.read(zyraEngineProvider.future);
+      if (!mounted) return;
+      engine.setCameraGeometry(
+        mountHeightM: profile.mountHeightM,
+        pitchDeg: 0.0,
+        hfovDeg: kDefaultHfovDeg,
+        frameW: preview.width.round(),
+        frameH: preview.height.round(),
+      );
+    } catch (e) {
+      if (mounted) debugPrint('[Zyra] set_camera_geometry failed: $e');
     }
   }
 

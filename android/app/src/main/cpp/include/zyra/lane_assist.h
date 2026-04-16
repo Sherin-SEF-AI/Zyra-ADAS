@@ -25,6 +25,7 @@
 
 #include <cstdint>
 
+#include "zyra/ipm.h"
 #include "zyra/lane_tracker.h"
 
 namespace zyra {
@@ -40,13 +41,20 @@ struct LaneAssistState {
   float dist_to_line_px;
   // Which side the driver is drifting toward (0 left, 1 right, -1 none).
   int drift_side;
+  // Phase 10 — world-space mirrors of the pixel fields above. NaN when
+  // IPM is not calibrated; otherwise in SI units.
+  float lateral_offset_m;  // signed metres, same sign convention as px
+  float dist_to_line_m;    // metres, -1 when unknown
 };
 
 class LaneAssist {
  public:
   LaneAssist();
 
-  void update(const LaneTracker& tracker, int frame_width, int frame_height);
+  // `ipm` may be null — world-space fields are set to NaN in that
+  // case, but pixel-space behaviour is unchanged.
+  void update(const LaneTracker& tracker, int frame_width, int frame_height,
+              const Ipm* ipm);
 
   const LaneAssistState& state() const { return state_; }
 

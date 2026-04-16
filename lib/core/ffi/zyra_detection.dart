@@ -86,6 +86,11 @@ final class ZyraLaneAssistStruct extends ffi.Struct {
   external double distToLinePx;
   @ffi.Int32()
   external int driftSide;
+  // Phase 10 — world-space mirrors. NaN when IPM is not calibrated.
+  @ffi.Float()
+  external double lateralOffsetM;
+  @ffi.Float()
+  external double distToLineM;
 }
 
 /// Phase 8 — per-object track. Mirrors `ZyraTrack` in ffi_api.h.
@@ -126,6 +131,11 @@ final class ZyraFcwStruct extends ffi.Struct {
   external int criticalClassId;
   @ffi.Float()
   external double criticalBboxHFrac;
+  // Phase 10 — world-space metrics. +INF when no target or uncalibrated.
+  @ffi.Float()
+  external double criticalDistanceM;
+  @ffi.Float()
+  external double rangeRateMps;
 }
 
 /// dart:ffi struct mirroring `ZyraDetectionBatch`. The fixed-size array is
@@ -285,6 +295,8 @@ class ZyraLaneAssist {
     required this.armed,
     required this.distToLinePx,
     required this.driftSide,
+    required this.lateralOffsetM,
+    required this.distToLineM,
   });
 
   final ZyraLdwState state;
@@ -309,8 +321,19 @@ class ZyraLaneAssist {
   /// 0 drifting toward left line, 1 toward right, -1 none.
   final int driftSide;
 
+  /// Phase 10 — signed lateral offset in metres. NaN when IPM isn't
+  /// calibrated (no vehicle profile geometry pushed yet).
+  final double lateralOffsetM;
+
+  /// Phase 10 — distance to nearest lane line in metres. -1 when unknown.
+  final double distToLineM;
+
   bool get isWarning => state == ZyraLdwState.warn;
   bool get isAlert => state == ZyraLdwState.alert;
+
+  /// True when [lateralOffsetM] is a usable (finite, non-NaN) metric.
+  bool get hasWorldMetrics =>
+      !lateralOffsetM.isNaN && lateralOffsetM.isFinite;
 }
 
 /// Phase 8 — smoothed, persistent-ID object track.
@@ -374,6 +397,8 @@ class ZyraFcw {
     required this.criticalTrackId,
     required this.criticalClassId,
     required this.criticalBboxHFrac,
+    required this.criticalDistanceM,
+    required this.rangeRateMps,
   });
 
   final ZyraFcwState state;
@@ -382,11 +407,23 @@ class ZyraFcw {
   final int criticalClassId;
   final double criticalBboxHFrac;
 
+  /// Phase 10 — ground range to the critical target, metres.
+  /// `double.infinity` when no target or IPM is uncalibrated.
+  final double criticalDistanceM;
+
+  /// Phase 10 — closing rate along the sight line, metres/sec.
+  /// Positive = closing (range shrinking). 0 when no target / uncalibrated.
+  final double rangeRateMps;
+
   bool get isSafe => state == ZyraFcwState.safe;
   bool get isCaution => state == ZyraFcwState.caution;
   bool get isWarn => state == ZyraFcwState.warn;
   bool get isAlert => state == ZyraFcwState.alert;
   bool get isActive => state != ZyraFcwState.safe;
+
+  /// True when [criticalDistanceM] is usable (finite, with a target).
+  bool get hasWorldMetrics =>
+      criticalTrackId >= 0 && criticalDistanceM.isFinite;
 }
 
 ZyraLdwState zyraLdwFromInt(int v) {

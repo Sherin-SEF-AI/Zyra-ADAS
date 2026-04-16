@@ -175,4 +175,16 @@ ZYRA_API int32_t zyra_engine_is_vulkan_active(int64_t handle) {
   return eng->vulkan_active();
 }
 
+ZYRA_API int32_t zyra_engine_set_camera_geometry(int64_t handle,
+                                                 float mount_h_m,
+                                                 float pitch_deg,
+                                                 float hfov_deg,
+                                                 int32_t frame_w,
+                                                 int32_t frame_h) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  return eng->set_camera_geometry(mount_h_m, pitch_deg, hfov_deg,
+                                  frame_w, frame_h);
+}
+
 }  // extern "C"

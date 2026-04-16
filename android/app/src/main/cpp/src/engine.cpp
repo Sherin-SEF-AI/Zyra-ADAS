@@ -68,6 +68,18 @@ void PerceptionEngine::set_nms_iou(float iou) {
   detector_.set_nms_iou(iou);
 }
 
+int PerceptionEngine::set_camera_geometry(float mount_h_m, float pitch_deg,
+                                          float hfov_deg,
+                                          int frame_w, int frame_h) {
+  if (mount_h_m <= 0.0f || hfov_deg <= 0.0f || hfov_deg >= 180.0f ||
+      frame_w <= 0 || frame_h <= 0) {
+    return -2;
+  }
+  std::lock_guard<std::mutex> lk(ipm_mu_);
+  ipm_.set_geometry(mount_h_m, pitch_deg, hfov_deg, frame_w, frame_h);
+  return 0;
+}
+
 int PerceptionEngine::vulkan_active() const {
   if (!loaded_.load(std::memory_order_acquire)) return -1;
   return detector_.vulkan_active() ? 1 : 0;
@@ -222,19 +234,30 @@ void PerceptionEngine::worker_loop_() {
       lanes.clear();
     }
 
-    // --- Phase 7: temporal tracker + lane assist. ------------------------
+    // --- Snapshot IPM under the lock so stages work off a consistent
+    //     projection even if set_camera_geometry fires mid-frame.
+    Ipm ipm_snapshot;
+    {
+      std::lock_guard<std::mutex> lk(ipm_mu_);
+      ipm_snapshot = ipm_;
+    }
+    const Ipm* ipm_for_stages =
+        ipm_snapshot.calibrated() ? &ipm_snapshot : nullptr;
+
+    // --- Phase 7 / 10: temporal tracker + lane assist. ------------------
     try {
       lane_tracker_.update(lanes, p.width, p.height);
-      lane_assist_.update(lane_tracker_, p.width, p.height);
+      lane_assist_.update(lane_tracker_, p.width, p.height, ipm_for_stages);
     } catch (...) {
       ZYRA_LOGE("lane tracker/assist threw on frame %llu",
                 static_cast<unsigned long long>(p.frame_id));
     }
 
-    // --- Phase 8: object tracker + forward collision warning. ------------
+    // --- Phase 8 / 10: object tracker + forward collision warning. ------
     try {
       object_tracker_.update(dets, p.timestamp_ms);
-      fcw_.update(object_tracker_.tracks(), p.width, p.height);
+      fcw_.update(object_tracker_.tracks(), p.width, p.height,
+                  ipm_for_stages, p.timestamp_ms);
     } catch (...) {
       ZYRA_LOGE("object tracker / fcw threw on frame %llu",
                 static_cast<unsigned long long>(p.frame_id));
@@ -297,6 +320,8 @@ void PerceptionEngine::worker_loop_() {
     batch.assist.armed = st.armed;
     batch.assist.dist_to_line_px = st.dist_to_line_px;
     batch.assist.drift_side = st.drift_side;
+    batch.assist.lateral_offset_m = st.lateral_offset_m;
+    batch.assist.dist_to_line_m = st.dist_to_line_m;
 
     // --- Phase 8: tracks + FCW pack. -------------------------------------
     const std::vector<TrackedObject> live_tracks = object_tracker_.tracks();
@@ -322,6 +347,8 @@ void PerceptionEngine::worker_loop_() {
     batch.fcw.critical_track_id = f.critical_track_id;
     batch.fcw.critical_class_id = f.critical_class_id;
     batch.fcw.critical_bbox_h_frac = f.critical_bbox_h_frac;
+    batch.fcw.critical_distance_m = f.critical_distance_m;
+    batch.fcw.range_rate_mps = f.range_rate_mps;
     batch.fcw_ms = 0.0f;  // tracker + fcw already budgeted under object_tracker_ms
 
     {

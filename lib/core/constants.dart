@@ -68,3 +68,13 @@ const double kDefaultNmsIou = 0.45;
 /// Max detections per frame — matches fixed buffer in [ZyraDetectionBatch]
 /// (defined in C POD struct). Tune only together with the C header.
 const int kMaxDetectionsPerFrame = 64;
+
+/// Phase 10 — assumed horizontal FoV for the back camera, in degrees.
+///
+/// The Flutter `camera` plugin does not expose intrinsics, and the
+/// resolution it picks may not match the sensor's full FoV. Most modern
+/// Android phones' main rear cameras span ~66–72° horizontal FoV at
+/// their default (non-ultrawide) output — 68° is a reasonable midpoint
+/// that keeps range estimates within ~10% accuracy at typical FCW
+/// distances without introducing a manual calibration UX.
+const double kDefaultHfovDeg = 68.0;

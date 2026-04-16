@@ -20,6 +20,7 @@
 #include "zyra/detector.h"
 #include "zyra/fcw.h"
 #include "zyra/ffi_api.h"  // ZyraDetectionBatch
+#include "zyra/ipm.h"
 #include "zyra/lane.h"
 #include "zyra/lane_assist.h"
 #include "zyra/lane_tracker.h"
@@ -48,6 +49,12 @@ class PerceptionEngine {
   void set_class_threshold(int zyra_class_id, float t);
   void set_conf_threshold(float t);
   void set_nms_iou(float iou);
+
+  // Phase 10 — camera optics + mount geometry. Pushed through to the
+  // IPM module so downstream stages (FCW range, lane-assist metres) can
+  // project pixels onto the ground plane. Returns 0 ok, -2 bad inputs.
+  int set_camera_geometry(float mount_h_m, float pitch_deg, float hfov_deg,
+                          int frame_w, int frame_h);
 
   // Submit a YUV_420_888 frame. The engine copies what it needs before
   // returning; callers may free plane pointers immediately.
@@ -90,6 +97,8 @@ class PerceptionEngine {
   LaneAssist lane_assist_;
   ObjectTracker object_tracker_;
   ForwardCollisionWarning fcw_;
+  Ipm ipm_;
+  std::mutex ipm_mu_;  // guards ipm_ across set_camera_geometry / worker reads
   std::thread worker_;
   std::atomic<bool> stop_{false};
   std::atomic<bool> loaded_{false};

@@ -97,35 +97,51 @@ class FcwBanner extends StatelessWidget {
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.28),
-              borderRadius: BorderRadius.circular(999),
+          if (fcw.hasWorldMetrics) ...<Widget>[
+            _MetricPill(label: 'DIST', value: '${fcw.criticalDistanceM.toStringAsFixed(1)}m'),
+            const SizedBox(width: 6),
+          ],
+          _MetricPill(label: 'TTC', value: ttc),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricPill extends StatelessWidget {
+  const _MetricPill({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.28),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Text(
+            '$label ',
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.6,
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const Text(
-                  'TTC ',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.6,
-                  ),
-                ),
-                Text(
-                  ttc,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontFamily: 'monospace',
-                    fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontFamily: 'monospace',
+              fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],

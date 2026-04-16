@@ -285,7 +285,7 @@ class _LateralBar extends StatelessWidget {
         ),
         const SizedBox(height: 2),
         Text(
-          '${assist.lateralOffsetPx >= 0 ? '+' : ''}${assist.lateralOffsetPx.toStringAsFixed(0)}px',
+          _formatLateralOffset(assist),
           textAlign: TextAlign.center,
           style: const TextStyle(
             color: Colors.white,
@@ -298,6 +298,16 @@ class _LateralBar extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Format the lateral offset: prefer world-space metres when the IPM is
+/// calibrated, otherwise fall back to pixel units.
+String _formatLateralOffset(ZyraLaneAssist assist) {
+  if (assist.hasWorldMetrics) {
+    final double m = assist.lateralOffsetM;
+    return '${m >= 0 ? '+' : ''}${m.toStringAsFixed(2)}m';
+  }
+  return '${assist.lateralOffsetPx >= 0 ? '+' : ''}${assist.lateralOffsetPx.toStringAsFixed(0)}px';
 }
 
 class _LateralBarPainter extends CustomPainter {

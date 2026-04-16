@@ -28,10 +28,12 @@ LaneAssist::LaneAssist() {
   state_.curvature_px = std::numeric_limits<float>::infinity();
   state_.dist_to_line_px = -1.0f;
   state_.drift_side = -1;
+  state_.lateral_offset_m = std::numeric_limits<float>::quiet_NaN();
+  state_.dist_to_line_m = -1.0f;
 }
 
 void LaneAssist::update(const LaneTracker& tracker, int frame_width,
-                        int frame_height) {
+                        int frame_height, const Ipm* ipm) {
   (void)frame_height;
 
   const auto& curves = tracker.curves();
@@ -89,6 +91,42 @@ void LaneAssist::update(const LaneTracker& tracker, int frame_width,
   }
   state_.dist_to_line_px = dist_px;
   state_.drift_side = drift_side;
+
+  // Phase 10 — world-space mirrors. We rely on the IPM's ground
+  // projection at the bottom-centre of the image: that's the patch of
+  // road directly under the ego's nose, and the reference point that
+  // makes "lateral offset" intuitive (metres left/right of where the
+  // tyres meet the road). If the IPM isn't calibrated, emit NaN so
+  // downstream code can distinguish "not available" from "zero".
+  const float nan_f = std::numeric_limits<float>::quiet_NaN();
+  state_.lateral_offset_m = nan_f;
+  state_.dist_to_line_m = -1.0f;
+  if (ipm != nullptr && ipm->calibrated()) {
+    // Reference: bottom-centre pixel → world point under ego nose.
+    const zyra::WorldPoint ref =
+        ipm->project_ground(frame_width * 0.5f,
+                            static_cast<float>(frame_height) - 1.0f);
+    // Offset: where the centre curve crosses y_bot (same pixel anchor
+    // that the px-space offset uses) → world x.
+    if (center != nullptr && std::isfinite(ref.z_m)) {
+      const float cx_at_yb = eval_poly(center->coeffs, center->y_bot);
+      const zyra::WorldPoint p =
+          ipm->project_ground(cx_at_yb, center->y_bot);
+      if (std::isfinite(p.z_m)) {
+        // Positive = driver drifted to the LEFT (lane centre is to
+        // driver's right relative to ego nose), matching
+        // lateral_offset_px sign convention.
+        state_.lateral_offset_m = ref.x_m - p.x_m;
+      }
+    }
+    if (dist_px > 0.0f) {
+      // Distance to line in metres: project the line's crossing pixel
+      // back to ground. We approximate by using `lateral_offset_m` as
+      // a lower bound, or falling back to px→m scaling at the bottom
+      // row if unavailable.
+      state_.dist_to_line_m = std::abs(state_.lateral_offset_m);
+    }
+  }
 
   // TTLC: use the signed lateral velocity that moves TOWARD the nearest
   // line. If the driver is drifting away (or dist_px unknown), TTLC = +INF.

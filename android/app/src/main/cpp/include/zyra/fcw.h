@@ -14,8 +14,10 @@
 #pragma once
 
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
+#include "zyra/ipm.h"
 #include "zyra/object_tracker.h"
 
 namespace zyra {
@@ -33,6 +35,13 @@ struct FcwSnapshot {
   int32_t critical_track_id;    // -1 if no target
   int32_t critical_class_id;    // Zyra class id of the critical target, -1 if none
   float   critical_bbox_h_frac; // critical bbox height / frame height, for HUD sizing hint
+  // Phase 10 — world-space metrics. Populated only when IPM is calibrated.
+  // distance_m: straight-line ground range, metres. +INF when not available
+  //             (no target, or IPM not calibrated).
+  // range_rate_mps: ±metres/second along sight line. Positive = closing.
+  //             +INF when no target; 0 when stationary or uncalibrated.
+  float   critical_distance_m;
+  float   range_rate_mps;
 };
 
 class ForwardCollisionWarning {
@@ -41,9 +50,13 @@ class ForwardCollisionWarning {
 
   // Evaluate FCW against the current set of confirmed tracks. `frame_w/h`
   // are the ORIGINAL image dimensions (sensor-native landscape) so we can
-  // compute ego-corridor membership without a projection matrix.
+  // compute ego-corridor membership without a projection matrix. `ipm`
+  // may be null (uncalibrated) — TTC then falls back to bbox-height-rate.
+  // `now_ms` is the wall clock of this frame (same clock the tracker
+  // sees) and feeds per-track range-rate smoothing.
   void update(const std::vector<TrackedObject>& tracks,
-              int frame_w, int frame_h);
+              int frame_w, int frame_h,
+              const Ipm* ipm, double now_ms);
 
   const FcwSnapshot& state() const { return state_; }
 
@@ -80,6 +93,18 @@ class ForwardCollisionWarning {
 
   int32_t pending_state_ = FCW_SAFE;
   int32_t pending_count_ = 0;
+
+  // Per-track range history — one slot per active track id so range rate
+  // can be EMA-smoothed across consecutive frames. Entries are pruned
+  // each call by not finding their id among the live tracks.
+  struct RangeHistory {
+    float range_m;           // last EMA range, metres
+    float range_rate_mps;    // EMA range rate, metres / second (+ = closing)
+    double last_ts_ms;
+  };
+  std::unordered_map<int32_t, RangeHistory> ranges_;
+  float range_ema_ = 0.50f;        // EMA on instantaneous range per frame
+  float rate_ema_  = 0.35f;        // EMA on range rate (heavier smoothing)
 
   // Classes that we warn against. Everything else (traffic_sign,
   // traffic_light, …) is ignored here.

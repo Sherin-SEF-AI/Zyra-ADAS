@@ -125,6 +125,10 @@ typedef struct ZyraLaneAssist {
   int32_t armed;                  // 1 if ldw_state != DISARMED
   float dist_to_line_px;          // nearest line distance at bottom; -1 = n/a
   int32_t drift_side;             // 0 left, 1 right, -1 none
+  // Phase 10 — world-space mirrors of the px fields above. NaN when
+  // IPM is not calibrated; otherwise SI units.
+  float lateral_offset_m;         // signed metres
+  float dist_to_line_m;           // metres, -1 when unknown
 } ZyraLaneAssist;
 
 // Phase 8 — persistent-ID tracked object. Coords are smoothed (EMA) in
@@ -148,6 +152,10 @@ typedef struct ZyraFcw {
   int32_t critical_track_id;     // -1 if no target
   int32_t critical_class_id;     // Zyra class; -1 if no target
   float critical_bbox_h_frac;    // critical bbox height / frame height
+  // Phase 10 — world-space metrics. +INF when IPM not calibrated or no
+  // target. range_rate_mps is +ve for closing (range shrinking).
+  float critical_distance_m;
+  float range_rate_mps;
 } ZyraFcw;
 
 typedef struct ZyraDetectionBatch {
@@ -271,6 +279,19 @@ ZYRA_API float zyra_engine_get_avg_fps(int64_t handle);
 
 // 1 if the model loaded on Vulkan, 0 for CPU, -1 if not loaded.
 ZYRA_API int32_t zyra_engine_is_vulkan_active(int64_t handle);
+
+// Phase 10 — install camera geometry so the engine can project image
+// pixels onto the road plane. Mount height in metres, pitch in degrees
+// (positive = camera tilted up), horizontal FoV in degrees. `frame_w/_h`
+// are the sensor-native landscape dimensions the engine processes. Safe
+// to call before or after `zyra_engine_load_model`; takes effect from
+// the next submitted frame. Returns 0 ok, -1 bad handle, -2 bad inputs.
+ZYRA_API int32_t zyra_engine_set_camera_geometry(int64_t handle,
+                                                 float mount_h_m,
+                                                 float pitch_deg,
+                                                 float hfov_deg,
+                                                 int32_t frame_w,
+                                                 int32_t frame_h);
 
 #ifdef __cplusplus
 }  // extern "C"
