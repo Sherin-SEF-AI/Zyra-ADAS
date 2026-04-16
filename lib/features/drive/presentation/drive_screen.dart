@@ -12,11 +12,13 @@ import '../../../app/routes.dart';
 import '../../../app/theme.dart';
 import '../../../core/audio/alert_audio_service.dart';
 import '../../../core/constants.dart';
+import '../../../core/data/session_controller.dart';
 import '../../../core/ffi/zyra_detection.dart';
 import '../../../core/ffi/zyra_engine.dart';
 import '../../../core/ffi/zyra_engine_provider.dart';
 import '../../../core/permissions/permissions_service.dart';
 import '../../../core/sensors/ego_state.dart';
+import '../../../core/sensors/gps_service.dart';
 import '../../vehicle_select/application/vehicle_profile_notifier.dart';
 import '../../vehicle_select/data/vehicle_profile.dart';
 import 'widgets/advanced_lane_overlay_painter.dart';
@@ -101,6 +103,8 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
     _egoTimer?.cancel();
+    // Phase 13 — finalize trip session.
+    ref.read(sessionControllerProvider.notifier).stop();
     _stopAndDisposeCamera();
     WakelockPlus.disable();
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
@@ -185,6 +189,12 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
       // resolution. IPM needs sensor-native landscape dims, which
       // previewSize already reports in landscape on back cameras.
       unawaited(_pushCameraGeometry());
+      // Phase 13 — start trip session.
+      final VehicleProfile? p =
+          ref.read(vehicleProfileProvider).valueOrNull;
+      if (p != null) {
+        ref.read(sessionControllerProvider.notifier).start(p);
+      }
       _attachStream(c);
     } catch (e) {
       if (!mounted) return;
@@ -236,6 +246,9 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
       if (b != null) {
         _maybeHaptic(b.assist.state);
         _maybeFcwHaptic(b.fcw.state);
+        // Phase 13 — sample frame stats (~1 Hz, internally throttled).
+        ref.read(sessionControllerProvider.notifier)
+            .recordFrameStats(b, _ego, eng.avgFps);
         setState(() {
           _latest = b;
           // Snapshot ego state on the same tick — avoids a separate
@@ -255,6 +268,11 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
         pitchDeg: ego.pitchDeg,
         yawRateDegPerS: ego.yawRateDegPerS,
       );
+      // Phase 13 — accumulate GPS track.
+      final GpsSnapshot? gps = ref.read(gpsSnapshotProvider).valueOrNull;
+      if (gps != null) {
+        ref.read(sessionControllerProvider.notifier).recordGpsPoint(gps);
+      }
     });
   }
 
@@ -269,8 +287,10 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     if (next == ZyraLdwState.alert && prev != ZyraLdwState.alert) {
       HapticFeedback.heavyImpact();
       ref.read(alertAudioProvider).playLdwAlert();
+      ref.read(sessionControllerProvider.notifier).recordEvent('ldw_alert');
     } else if (next == ZyraLdwState.warn && prev == ZyraLdwState.armed) {
       HapticFeedback.mediumImpact();
+      ref.read(sessionControllerProvider.notifier).recordEvent('ldw_warn');
     }
   }
 
@@ -285,12 +305,18 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
     final int nextRank = next.index;
     final int prevRank = prev.index;
     if (nextRank <= prevRank) return;
+    if (next == ZyraFcwState.caution) {
+      ref.read(sessionControllerProvider.notifier).recordEvent('fcw_caution');
+      return;
+    }
     if (next == ZyraFcwState.alert) {
       HapticFeedback.heavyImpact();
       ref.read(alertAudioProvider).playFcwAlert();
+      ref.read(sessionControllerProvider.notifier).recordEvent('fcw_alert');
     } else if (next == ZyraFcwState.warn) {
       HapticFeedback.mediumImpact();
       ref.read(alertAudioProvider).playFcwWarn();
+      ref.read(sessionControllerProvider.notifier).recordEvent('fcw_warn');
     }
   }
 
