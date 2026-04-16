@@ -56,13 +56,14 @@ class ZyraEngineNotifier extends AsyncNotifier<ZyraEngine> {
     // this block.
     _applyDefaultThresholds(engine);
 
-    // Push profile-specific tuning later phases will layer on. Right now
-    // we just listen so threshold changes propagate without a full rebuild.
+    // Push profile-specific tuning. Listen for changes so switching
+    // vehicles mid-session updates thresholds and dynamics.
+    _pushVehicleDynamics(engine, ref.read(vehicleProfileProvider).valueOrNull);
     ref.listen<AsyncValue<VehicleProfile?>>(vehicleProfileProvider,
         (AsyncValue<VehicleProfile?>? _,
             AsyncValue<VehicleProfile?> next) {
-      // Placeholder — no per-profile threshold overrides yet.
       next.whenData((VehicleProfile? p) {
+        _pushVehicleDynamics(engine, p);
         if (p != null && kDebugMode) {
           debugPrint('[Zyra] engine: vehicle profile=${p.id}');
         }
@@ -72,6 +73,17 @@ class ZyraEngineNotifier extends AsyncNotifier<ZyraEngine> {
     _engine = engine;
     return engine;
   }
+}
+
+void _pushVehicleDynamics(ZyraEngine engine, VehicleProfile? p) {
+  if (p == null) return;
+  engine.setVehicleDynamics(
+    wheelbaseM: p.wheelbaseM,
+    maxDecelMps2: p.maxDecelMps2,
+    comfortDecelMps2: p.comfortDecelMps2,
+    maxLateralAccelMps2: p.maxLateralAccelMps2,
+    steerRateLimitRadPerS: p.steerRateLimitRadPerS,
+  );
 }
 
 void _applyDefaultThresholds(ZyraEngine engine) {

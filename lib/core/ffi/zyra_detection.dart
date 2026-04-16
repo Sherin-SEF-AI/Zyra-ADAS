@@ -207,6 +207,15 @@ final class ZyraDetectionBatchStruct extends ffi.Struct {
   external double egoYawRateDegS;
   @ffi.Int32()
   external int reserved5;
+  // Phase 15 — shadow-mode L2 plan.
+  @ffi.Float()
+  external double shadowBrakeMps2;
+  @ffi.Float()
+  external double shadowSteerRad;
+  @ffi.Int32()
+  external int shadowBrakeActive;
+  @ffi.Int32()
+  external int shadowSteerActive;
 }
 
 /// Immutable Dart-side detection. Returned by `ZyraEngine.pollDetections()`.
@@ -435,6 +444,27 @@ class ZyraFcw {
       criticalTrackId >= 0 && criticalDistanceM.isFinite;
 }
 
+/// Phase 15 — Shadow-mode L2 plan snapshot.
+class ZyraShadowPlan {
+  const ZyraShadowPlan({
+    required this.brakeMps2,
+    required this.steerRad,
+    required this.brakeActive,
+    required this.steerActive,
+  });
+
+  /// Required deceleration, m/s² (positive = braking).
+  final double brakeMps2;
+
+  /// Desired steering angle, radians (positive = left).
+  final double steerRad;
+
+  final bool brakeActive;
+  final bool steerActive;
+
+  bool get isActive => brakeActive || steerActive;
+}
+
 ZyraLdwState zyraLdwFromInt(int v) {
   switch (v) {
     case 1:
@@ -475,6 +505,7 @@ class ZyraBatch {
     required this.egoSpeedMps,
     required this.egoPitchDeg,
     required this.egoYawRateDegS,
+    required this.shadowPlan,
   });
 
   final int frameId;
@@ -518,6 +549,9 @@ class ZyraBatch {
   final double egoSpeedMps;
   final double egoPitchDeg;
   final double egoYawRateDegS;
+
+  /// Phase 15 — shadow-mode L2 plan for this frame.
+  final ZyraShadowPlan shadowPlan;
 
   double get egoSpeedKmh => egoSpeedMps * 3.6;
 

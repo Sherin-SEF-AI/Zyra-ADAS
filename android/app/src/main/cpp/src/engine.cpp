@@ -96,6 +96,13 @@ void PerceptionEngine::set_ego_state(float ego_speed_mps, float pitch_deg,
   }
 }
 
+void PerceptionEngine::set_vehicle_dynamics(const VehicleDynamics& d) {
+  // Shadow planner is only read from the worker thread, but dynamics
+  // are pushed from Dart. A simple lock keeps them consistent.
+  std::lock_guard<std::mutex> lk(ego_mu_);
+  shadow_planner_.set_dynamics(d);
+}
+
 int PerceptionEngine::vulkan_active() const {
   if (!loaded_.load(std::memory_order_acquire)) return -1;
   return detector_.vulkan_active() ? 1 : 0;
@@ -287,6 +294,22 @@ void PerceptionEngine::worker_loop_() {
                 static_cast<unsigned long long>(p.frame_id));
     }
 
+    // --- Phase 15: shadow-mode L2 planner. --------------------------------
+    try {
+      const FcwSnapshot& fcw_snap = fcw_.state();
+      const LaneAssistState& la_snap = lane_assist_.state();
+      shadow_planner_.compute(
+          ego_snap.speed_mps,
+          fcw_snap.critical_distance_m,
+          fcw_snap.range_rate_mps,
+          la_snap.lateral_offset_m,
+          la_snap.lateral_velocity_px_s * 0.001f,  // rough px→m approx
+          0.0f);  // curvature feed-forward placeholder
+    } catch (...) {
+      ZYRA_LOGE("shadow planner threw on frame %llu",
+                static_cast<unsigned long long>(p.frame_id));
+    }
+
     // --- Publish the batch. ---------------------------------------------
     ZyraDetectionBatch batch{};
     batch.frame_id = p.frame_id;
@@ -380,6 +403,13 @@ void PerceptionEngine::worker_loop_() {
     batch.ego_speed_mps = ego_snap.speed_mps;
     batch.ego_pitch_deg = ego_snap.pitch_deg;
     batch.ego_yaw_rate_deg_s = ego_snap.yaw_rate_deg_s;
+
+    // Phase 15 — shadow plan.
+    const ShadowPlan& sp = shadow_planner_.plan();
+    batch.shadow_brake_mps2 = sp.brake_mps2;
+    batch.shadow_steer_rad = sp.steer_rad;
+    batch.shadow_brake_active = sp.brake_active;
+    batch.shadow_steer_active = sp.steer_active;
 
     {
       std::lock_guard<std::mutex> lk(result_mu_);

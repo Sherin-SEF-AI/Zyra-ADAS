@@ -197,6 +197,11 @@ typedef struct ZyraDetectionBatch {
   float ego_pitch_deg;
   float ego_yaw_rate_deg_s;
   int32_t reserved5;
+  // --- Phase 15 shadow-mode L2 plan -------------------------------------
+  float shadow_brake_mps2;
+  float shadow_steer_rad;
+  int32_t shadow_brake_active;
+  int32_t shadow_steer_active;
 } ZyraDetectionBatch;
 
 // Create a new engine. Returns an opaque handle > 0 on success, or 0 on
@@ -291,6 +296,12 @@ ZYRA_API int32_t zyra_engine_is_vulkan_active(int64_t handle);
 // are the sensor-native landscape dimensions the engine processes. Safe
 // to call before or after `zyra_engine_load_model`; takes effect from
 // the next submitted frame. Returns 0 ok, -1 bad handle, -2 bad inputs.
+// Phase 15 — push vehicle dynamics for the shadow-mode L2 planner.
+// Typically called once on profile selection. Thread-safe.
+ZYRA_API int32_t zyra_engine_set_vehicle_dynamics(int64_t handle,
+    float wheelbase_m, float max_decel_mps2, float comfort_decel_mps2,
+    float max_lateral_accel_mps2, float steer_rate_limit_rad_s);
+
 // Phase 11 — push ego-vehicle state (GPS speed, IMU pitch, yaw rate) into
 // the engine so speed-gated warnings can suppress false positives at low
 // speed or during intentional turns. Called at ~1 Hz from the Dart sensor

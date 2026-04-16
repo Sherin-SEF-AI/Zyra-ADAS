@@ -25,6 +25,7 @@
 #include "zyra/lane_assist.h"
 #include "zyra/lane_tracker.h"
 #include "zyra/object_tracker.h"
+#include "zyra/shadow_planner.h"
 
 namespace zyra {
 
@@ -59,6 +60,9 @@ class PerceptionEngine {
   // Phase 11 — push ego speed + IMU data. Thread-safe, ~1 Hz from Dart.
   void set_ego_state(float ego_speed_mps, float pitch_deg,
                      float yaw_rate_deg_s);
+
+  // Phase 15 — push vehicle dynamics for shadow planner. Thread-safe.
+  void set_vehicle_dynamics(const VehicleDynamics& d);
 
   // Submit a YUV_420_888 frame. The engine copies what it needs before
   // returning; callers may free plane pointers immediately.
@@ -101,6 +105,7 @@ class PerceptionEngine {
   LaneAssist lane_assist_;
   ObjectTracker object_tracker_;
   ForwardCollisionWarning fcw_;
+  ShadowPlanner shadow_planner_;
   Ipm ipm_;
   std::mutex ipm_mu_;  // guards ipm_ across set_camera_geometry / worker reads
 

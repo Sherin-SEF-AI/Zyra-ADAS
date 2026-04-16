@@ -175,6 +175,21 @@ ZYRA_API int32_t zyra_engine_is_vulkan_active(int64_t handle) {
   return eng->vulkan_active();
 }
 
+ZYRA_API int32_t zyra_engine_set_vehicle_dynamics(int64_t handle,
+    float wheelbase_m, float max_decel_mps2, float comfort_decel_mps2,
+    float max_lateral_accel_mps2, float steer_rate_limit_rad_s) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  zyra::VehicleDynamics d;
+  d.wheelbase_m = wheelbase_m;
+  d.max_decel_mps2 = max_decel_mps2;
+  d.comfort_decel_mps2 = comfort_decel_mps2;
+  d.max_lateral_accel_mps2 = max_lateral_accel_mps2;
+  d.steer_rate_limit_rad_s = steer_rate_limit_rad_s;
+  eng->set_vehicle_dynamics(d);
+  return 0;
+}
+
 ZYRA_API int32_t zyra_engine_set_ego_state(int64_t handle,
                                             float ego_speed_mps,
                                             float pitch_deg,

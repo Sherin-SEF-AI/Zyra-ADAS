@@ -88,6 +88,11 @@ typedef _EngineSetEgoStateC = ffi.Int32 Function(
     ffi.Int64, ffi.Float, ffi.Float, ffi.Float);
 typedef _EngineSetEgoStateD = int Function(int, double, double, double);
 
+typedef _EngineSetVehicleDynamicsC = ffi.Int32 Function(
+    ffi.Int64, ffi.Float, ffi.Float, ffi.Float, ffi.Float, ffi.Float);
+typedef _EngineSetVehicleDynamicsD = int Function(
+    int, double, double, double, double, double);
+
 // -----------------------------------------------------------------------------
 
 /// Thin wrapper around the Phase 4 C engine API. Owns an opaque native handle.
@@ -145,7 +150,11 @@ class ZyraEngine {
         _setEgoState = lib
             .lookup<ffi.NativeFunction<_EngineSetEgoStateC>>(
                 'zyra_engine_set_ego_state')
-            .asFunction<_EngineSetEgoStateD>() {
+            .asFunction<_EngineSetEgoStateD>(),
+        _setVehicleDynamics = lib
+            .lookup<ffi.NativeFunction<_EngineSetVehicleDynamicsC>>(
+                'zyra_engine_set_vehicle_dynamics')
+            .asFunction<_EngineSetVehicleDynamicsD>() {
     _batchBuffer = allocateBatchBuffer();
   }
 
@@ -174,6 +183,7 @@ class ZyraEngine {
   final _EngineIsVulkanD _isVulkanActive;
   final _EngineSetCameraGeometryD _setCameraGeometry;
   final _EngineSetEgoStateD _setEgoState;
+  final _EngineSetVehicleDynamicsD _setVehicleDynamics;
 
   late final ffi.Pointer<ZyraDetectionBatchStruct> _batchBuffer;
   bool _disposed = false;
@@ -262,6 +272,20 @@ class ZyraEngine {
   }) {
     _ensureAlive();
     _setEgoState(handle, speedMps, pitchDeg, yawRateDegPerS);
+  }
+
+  /// Phase 15 — push vehicle dynamics for the shadow-mode L2 planner.
+  /// Typically called once on profile selection.
+  void setVehicleDynamics({
+    required double wheelbaseM,
+    required double maxDecelMps2,
+    required double comfortDecelMps2,
+    required double maxLateralAccelMps2,
+    required double steerRateLimitRadPerS,
+  }) {
+    _ensureAlive();
+    _setVehicleDynamics(handle, wheelbaseM, maxDecelMps2, comfortDecelMps2,
+        maxLateralAccelMps2, steerRateLimitRadPerS);
   }
 
   /// Average completed inference FPS over the trailing ~1 s window.
@@ -473,6 +497,12 @@ class ZyraEngine {
       egoSpeedMps: b.egoSpeedMps,
       egoPitchDeg: b.egoPitchDeg,
       egoYawRateDegS: b.egoYawRateDegS,
+      shadowPlan: ZyraShadowPlan(
+        brakeMps2: b.shadowBrakeMps2,
+        steerRad: b.shadowSteerRad,
+        brakeActive: b.shadowBrakeActive != 0,
+        steerActive: b.shadowSteerActive != 0,
+      ),
     );
   }
 

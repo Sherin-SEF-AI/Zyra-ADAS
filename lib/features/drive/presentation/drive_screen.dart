@@ -25,6 +25,7 @@ import 'widgets/fcw_banner.dart';
 import 'widgets/fps_bar.dart';
 import 'widgets/lane_assist_hud.dart';
 import 'widgets/lane_overlay_painter.dart';
+import 'widgets/shadow_l2_badge.dart';
 import 'widgets/speed_hud.dart';
 import 'widgets/status_bar.dart';
 
@@ -699,6 +700,17 @@ class _LiveView extends StatelessWidget {
             child: SpeedHud(ego: ego),
           ),
         ),
+        // Phase 15 — shadow L2 badge, bottom-right.
+        if (latest != null && latest!.shadowPlan.isActive)
+          Positioned(
+            bottom: 40,
+            right: 12,
+            child: SafeArea(
+              top: false,
+              left: false,
+              child: ShadowL2Badge(plan: latest!.shadowPlan),
+            ),
+          ),
       ],
     );
   }
