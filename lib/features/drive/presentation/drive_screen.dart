@@ -656,17 +656,20 @@ class _LiveView extends StatelessWidget {
                     ),
                   ),
                   // Phase 7 — smoothed polynomial lane curves + drift wedge.
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: AdvancedLaneOverlayPainter(
-                        batch: latest,
-                        sensorWidth: preview.width,
-                        sensorHeight: preview.height,
-                        sensorOrientation: effectiveSensorOrientation,
-                        mirror: isFront,
+                  // Only shown as fallback when seg model isn't producing
+                  // driveable area (the green polygon replaces lane lines).
+                  if (latest == null || !latest!.hasDriveable)
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: AdvancedLaneOverlayPainter(
+                          batch: latest,
+                          sensorWidth: preview.width,
+                          sensorHeight: preview.height,
+                          sensorOrientation: effectiveSensorOrientation,
+                          mirror: isFront,
+                        ),
                       ),
                     ),
-                  ),
                   Positioned.fill(
                     child: CustomPaint(
                       painter: DetectionOverlayPainter(
