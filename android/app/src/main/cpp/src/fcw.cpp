@@ -22,6 +22,7 @@ ForwardCollisionWarning::ForwardCollisionWarning() {
   state_.critical_bbox_h_frac = 0.0f;
   state_.critical_distance_m = kInf;
   state_.range_rate_mps = 0.0f;
+  state_.critical_depth = 0.0f;
 }
 
 bool ForwardCollisionWarning::class_is_threat_(int32_t class_id) const {
@@ -126,6 +127,25 @@ void ForwardCollisionWarning::update(const std::vector<TrackedObject>& tracks,
       if (bbox_ttc < track_ttc) track_ttc = bbox_ttc;
     }
 
+    // Phase 17 — depth-rate TTC from monocular depth estimation.
+    // Relative depth (0=far, 1=near) changes as objects approach.
+    // depth_rate = Δdepth / (depth * Δt); TTC ≈ 1 / depth_rate.
+    if (t.depth_relative > 0.01f) {
+      auto dit = depth_history_.find(t.id);
+      if (dit != depth_history_.end()) {
+        const DepthHistory& prev = dit->second;
+        const float dt = static_cast<float>(
+            std::max(1e-3, (now_ms - prev.last_ts_ms) / 1000.0));
+        const float depth_rate =
+            (t.depth_relative - prev.depth) / (prev.depth * dt);
+        if (depth_rate > 0.01f) {
+          const float depth_ttc = 1.0f / depth_rate;
+          if (depth_ttc < track_ttc) track_ttc = depth_ttc;
+        }
+      }
+      depth_history_[t.id] = DepthHistory{t.depth_relative, now_ms};
+    }
+
     if (track_ttc < best_ttc) {
       best_ttc = track_ttc;
       best_range_m = track_range_m;
@@ -140,6 +160,13 @@ void ForwardCollisionWarning::update(const std::vector<TrackedObject>& tracks,
   for (auto it = ranges_.begin(); it != ranges_.end();) {
     if (seen.find(it->first) == seen.end()) {
       it = ranges_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  for (auto it = depth_history_.begin(); it != depth_history_.end();) {
+    if (seen.find(it->first) == seen.end()) {
+      it = depth_history_.erase(it);
     } else {
       ++it;
     }
@@ -185,6 +212,7 @@ void ForwardCollisionWarning::update(const std::vector<TrackedObject>& tracks,
   state_.critical_bbox_h_frac = best ? (best->height() / fh) : 0.0f;
   state_.critical_distance_m = best ? best_range_m : kInf;
   state_.range_rate_mps = best ? best_rate_mps : 0.0f;
+  state_.critical_depth = best ? best->depth_relative : 0.0f;
 }
 
 }  // namespace zyra

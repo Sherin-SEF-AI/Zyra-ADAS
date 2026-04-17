@@ -60,6 +60,21 @@ class ZyraEngineNotifier extends AsyncNotifier<ZyraEngine> {
           debugPrint('[Zyra] engine: seg model failed: $e — lane fallback');
         }
       }
+
+      // Depth Anything V2 — runs on CPU (2 threads, parallel with YOLO).
+      try {
+        engine.loadDepthModel(
+          paramPath: paths.depthParamPath,
+          binPath: paths.depthBinPath,
+        );
+        if (kDebugMode) {
+          debugPrint('[Zyra] engine: depth model loaded (CPU)');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[Zyra] engine: depth model failed: $e — depth disabled');
+        }
+      }
     } catch (_) {
       engine.dispose();
       rethrow;

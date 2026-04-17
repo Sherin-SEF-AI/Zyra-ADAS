@@ -489,6 +489,13 @@ class _DriveScreenState extends ConsumerState<DriveScreen>
         backgroundColor: Colors.black.withValues(alpha: 0.35),
         actions: <Widget>[
           IconButton(
+            tooltip: 'Depth view',
+            icon: const Icon(Icons.layers_outlined),
+            onPressed: () {
+              Navigator.of(context).pushNamed(ZyraRoutes.depth);
+            },
+          ),
+          IconButton(
             tooltip: 'Engine debug',
             icon: const Icon(Icons.bug_report_outlined),
             onPressed: () {

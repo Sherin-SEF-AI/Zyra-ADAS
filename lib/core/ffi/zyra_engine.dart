@@ -98,6 +98,11 @@ typedef _EngineLoadSegModelC = ffi.Int32 Function(
 typedef _EngineLoadSegModelD = int Function(
     int, ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, int);
 
+typedef _EngineLoadDepthModelC = ffi.Int32 Function(
+    ffi.Int64, ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
+typedef _EngineLoadDepthModelD = int Function(
+    int, ffi.Pointer<Utf8>, ffi.Pointer<Utf8>);
+
 // -----------------------------------------------------------------------------
 
 /// Thin wrapper around the Phase 4 C engine API. Owns an opaque native handle.
@@ -163,7 +168,11 @@ class ZyraEngine {
         _loadSegModel = lib
             .lookup<ffi.NativeFunction<_EngineLoadSegModelC>>(
                 'zyra_engine_load_seg_model')
-            .asFunction<_EngineLoadSegModelD>() {
+            .asFunction<_EngineLoadSegModelD>(),
+        _loadDepthModel = lib
+            .lookup<ffi.NativeFunction<_EngineLoadDepthModelC>>(
+                'zyra_engine_load_depth_model')
+            .asFunction<_EngineLoadDepthModelD>() {
     _batchBuffer = allocateBatchBuffer();
   }
 
@@ -194,6 +203,7 @@ class ZyraEngine {
   final _EngineSetEgoStateD _setEgoState;
   final _EngineSetVehicleDynamicsD _setVehicleDynamics;
   final _EngineLoadSegModelD _loadSegModel;
+  final _EngineLoadDepthModelD _loadDepthModel;
 
   late final ffi.Pointer<ZyraDetectionBatchStruct> _batchBuffer;
   bool _disposed = false;
@@ -202,6 +212,7 @@ class ZyraEngine {
   // Reusable mask buffer to avoid GC pressure from allocating 3600 bytes
   // every frame. Only reallocated if the mask size changes.
   Uint8List? _maskBuf;
+  Uint8List? _depthBuf;
 
   /// Release the underlying native engine + scratch buffer.
   void dispose() {
@@ -248,6 +259,27 @@ class ZyraEngine {
       if (rc != 0) {
         throw ZyraEngineException(
             'load_seg_model failed (code $rc) for $paramPath / $binPath');
+      }
+    } finally {
+      calloc.free(p);
+      calloc.free(b);
+    }
+  }
+
+  /// Load the Depth Anything V2 NCNN model. Runs on CPU (Vulkan reserved
+  /// for YOLO). See `zyra_engine_load_depth_model`.
+  void loadDepthModel({
+    required String paramPath,
+    required String binPath,
+  }) {
+    _ensureAlive();
+    final ffi.Pointer<Utf8> p = paramPath.toNativeUtf8();
+    final ffi.Pointer<Utf8> b = binPath.toNativeUtf8();
+    try {
+      final int rc = _loadDepthModel(handle, p, b);
+      if (rc != 0) {
+        throw ZyraEngineException(
+            'load_depth_model failed (code $rc) for $paramPath / $binPath');
       }
     } finally {
       calloc.free(p);
@@ -496,6 +528,7 @@ class ZyraEngine {
         ageFrames: t.ageFrames,
         confidence: t.confidence,
         heightRatePerS: t.heightRatePerS,
+        depthRelative: t.depthRelative,
       );
     });
 
@@ -508,6 +541,7 @@ class ZyraEngine {
       criticalBboxHFrac: fs.criticalBboxHFrac,
       criticalDistanceM: fs.criticalDistanceM,
       rangeRateMps: fs.rangeRateMps,
+      criticalDepth: fs.criticalDepth,
     );
 
     // Extract driveable area mask (3600 bytes) when available.
@@ -522,6 +556,19 @@ class ZyraEngine {
         _maskBuf![i] = b.segDriveableMask[i];
       }
       driveableMask = _maskBuf;
+    }
+
+    // Extract depth map (4800 bytes) when available.
+    Uint8List? depthMap;
+    if (b.depthValid != 0) {
+      const int depthSize = 4800;
+      if (_depthBuf == null || _depthBuf!.length != depthSize) {
+        _depthBuf = Uint8List(depthSize);
+      }
+      for (int i = 0; i < depthSize; i++) {
+        _depthBuf![i] = b.depthMap[i];
+      }
+      depthMap = _depthBuf;
     }
 
     return ZyraBatch(
@@ -559,6 +606,12 @@ class ZyraEngine {
       driveableMask: driveableMask,
       driveableMaskW: b.segMaskW,
       driveableMaskH: b.segMaskH,
+      depthInferMs: b.depthInferMs,
+      depthPostMs: b.depthPostMs,
+      hasDepth: b.depthValid != 0,
+      depthMap: depthMap,
+      depthMapW: b.depthMapW,
+      depthMapH: b.depthMapH,
     );
   }
 

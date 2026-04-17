@@ -80,6 +80,7 @@ set(ZYRA_SOURCES
     src/object_tracker.cpp
     src/fcw.cpp
     src/road_seg.cpp
+    src/depth_estimator.cpp
 )
 
 add_library(zyra_perception SHARED ${ZYRA_SOURCES})

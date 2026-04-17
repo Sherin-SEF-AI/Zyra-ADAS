@@ -60,6 +60,13 @@ int PerceptionEngine::load_seg_model(const std::string& param_path,
   return 0;
 }
 
+int PerceptionEngine::load_depth_model(const std::string& param_path,
+                                       const std::string& bin_path) {
+  if (param_path.empty() || bin_path.empty()) return -2;
+  if (!depth_estimator_.load(param_path, bin_path)) return -3;
+  return 0;
+}
+
 int PerceptionEngine::warmup() {
   if (!loaded_.load(std::memory_order_acquire)) return -1;
   std::vector<uint8_t> grey(640 * 640 * 3, 114);
@@ -243,13 +250,23 @@ void PerceptionEngine::worker_loop_() {
       fv.v = p.uv_buf.data() + plane;
     }
 
-    // --- Run YOLO detection + road segmentation in PARALLEL. ---------------
-    // YOLO runs on Vulkan GPU; TwinLiteNet runs on CPU threads.
+    // --- Run YOLO + road segmentation + depth in PARALLEL. ------------------
+    // YOLO runs on Vulkan GPU; TwinLiteNet + Depth Anything on CPU threads.
     // They don't compete for the same compute resources, so overlapping
-    // them effectively hides the seg latency.
+    // them effectively hides the seg/depth latency.
     std::vector<Detection> dets;
     RoadSegResult seg;
+    DepthResult depth_result;
     std::vector<Lane> lanes;
+
+    // Launch depth on a background thread if loaded (CPU, 2 threads).
+    std::future<DepthResult> depth_future;
+    const bool run_depth = depth_estimator_.loaded();
+    if (run_depth) {
+      depth_future = std::async(std::launch::async, [this, &fv]() {
+        return depth_estimator_.estimate(fv);
+      });
+    }
 
     if (road_segmentor_.loaded()) {
       // Launch seg on a background thread (CPU) while YOLO runs on GPU.
@@ -264,6 +281,7 @@ void PerceptionEngine::worker_loop_() {
         ZYRA_LOGE("detector threw — dropping frame %llu",
                   static_cast<unsigned long long>(p.frame_id));
         seg_future.wait();  // don't leak the async
+        if (run_depth) depth_future.wait();
         continue;
       }
 
@@ -283,6 +301,7 @@ void PerceptionEngine::worker_loop_() {
       } catch (...) {
         ZYRA_LOGE("detector threw — dropping frame %llu",
                   static_cast<unsigned long long>(p.frame_id));
+        if (run_depth) depth_future.wait();
         continue;
       }
       try {
@@ -292,6 +311,16 @@ void PerceptionEngine::worker_loop_() {
         ZYRA_LOGE("lane detector threw — emitting empty lanes for frame %llu",
                   static_cast<unsigned long long>(p.frame_id));
         lanes.clear();
+      }
+    }
+
+    // Collect depth result.
+    if (run_depth) {
+      try {
+        depth_result = depth_future.get();
+      } catch (...) {
+        ZYRA_LOGE("depth estimator threw on frame %llu",
+                  static_cast<unsigned long long>(p.frame_id));
       }
     }
 
@@ -325,10 +354,26 @@ void PerceptionEngine::worker_loop_() {
     // --- Phase 8 / 10 / 11: object tracker + forward collision warning. -
     try {
       object_tracker_.update(dets, p.timestamp_ms);
-      fcw_.update(object_tracker_.tracks(), p.width, p.height,
+    } catch (...) {
+      ZYRA_LOGE("object tracker threw on frame %llu",
+                static_cast<unsigned long long>(p.frame_id));
+    }
+
+    // Phase 17 — inject per-track median depth from depth estimator.
+    // Must happen after tracker update, before FCW evaluation.
+    std::vector<TrackedObject> live_tracks = object_tracker_.tracks();
+    if (depth_result.valid) {
+      for (TrackedObject& t : live_tracks) {
+        t.depth_relative = depth_estimator_.median_depth_in_bbox(
+            t.x1, t.y1, t.x2, t.y2, p.width, p.height);
+      }
+    }
+
+    try {
+      fcw_.update(live_tracks, p.width, p.height,
                   ipm_for_stages, p.timestamp_ms, ego_snap.speed_mps);
     } catch (...) {
-      ZYRA_LOGE("object tracker / fcw threw on frame %llu",
+      ZYRA_LOGE("fcw threw on frame %llu",
                 static_cast<unsigned long long>(p.frame_id));
     }
 
@@ -409,7 +454,7 @@ void PerceptionEngine::worker_loop_() {
     batch.assist.dist_to_line_m = st.dist_to_line_m;
 
     // --- Phase 8: tracks + FCW pack. -------------------------------------
-    const std::vector<TrackedObject> live_tracks = object_tracker_.tracks();
+    // live_tracks already populated above (with depth injected).
     const int tc = std::min<int>(static_cast<int>(live_tracks.size()),
                                  ZYRA_MAX_TRACKS);
     batch.track_count = tc;
@@ -425,6 +470,7 @@ void PerceptionEngine::worker_loop_() {
       batch.tracks[i].age_frames = t.age_frames;
       batch.tracks[i].confidence = t.confidence;
       batch.tracks[i].height_rate_per_s = t.height_rate_per_s;
+      batch.tracks[i].depth_relative = t.depth_relative;
     }
     const FcwSnapshot& f = fcw_.state();
     batch.fcw.state = f.state;
@@ -434,6 +480,7 @@ void PerceptionEngine::worker_loop_() {
     batch.fcw.critical_bbox_h_frac = f.critical_bbox_h_frac;
     batch.fcw.critical_distance_m = f.critical_distance_m;
     batch.fcw.range_rate_mps = f.range_rate_mps;
+    batch.fcw.critical_depth = f.critical_depth;
     batch.fcw_ms = 0.0f;  // tracker + fcw already budgeted under object_tracker_ms
 
     // Phase 11 — echo ego state so Dart HUD can read back what the engine
@@ -458,6 +505,17 @@ void PerceptionEngine::worker_loop_() {
     if (seg.has_driveable) {
       std::memcpy(batch.seg_driveable_mask, seg.driveable_mask,
                   sizeof(seg.driveable_mask));
+    }
+
+    // Phase 17 — depth estimation results.
+    batch.depth_infer_ms = depth_result.inference_ms;
+    batch.depth_post_ms = depth_result.postprocess_ms;
+    batch.depth_valid = depth_result.valid ? 1 : 0;
+    batch.depth_map_w = depth_result.map_w;
+    batch.depth_map_h = depth_result.map_h;
+    if (depth_result.valid) {
+      std::memcpy(batch.depth_map, depth_result.depth_map,
+                  sizeof(depth_result.depth_map));
     }
 
     {

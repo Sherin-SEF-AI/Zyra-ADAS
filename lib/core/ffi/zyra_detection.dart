@@ -118,6 +118,9 @@ final class ZyraTrackStruct extends ffi.Struct {
   external double confidence;
   @ffi.Float()
   external double heightRatePerS;
+  // Phase 17 — relative depth (0..1, 0=far).
+  @ffi.Float()
+  external double depthRelative;
 }
 
 /// Phase 8 — FCW snapshot. Mirrors `ZyraFcw` in ffi_api.h.
@@ -137,6 +140,9 @@ final class ZyraFcwStruct extends ffi.Struct {
   external double criticalDistanceM;
   @ffi.Float()
   external double rangeRateMps;
+  // Phase 17 — relative depth of critical target (0..1).
+  @ffi.Float()
+  external double criticalDepth;
 }
 
 /// dart:ffi struct mirroring `ZyraDetectionBatch`. The fixed-size array is
@@ -232,6 +238,21 @@ final class ZyraDetectionBatchStruct extends ffi.Struct {
   external int segReserved;
   @ffi.Array(3600)
   external ffi.Array<ffi.Uint8> segDriveableMask;
+  // Phase 17 — depth estimation block.
+  @ffi.Float()
+  external double depthInferMs;
+  @ffi.Float()
+  external double depthPostMs;
+  @ffi.Int32()
+  external int depthValid;
+  @ffi.Int32()
+  external int depthMapW;
+  @ffi.Int32()
+  external int depthMapH;
+  @ffi.Int32()
+  external int depthReserved;
+  @ffi.Array(4800)
+  external ffi.Array<ffi.Uint8> depthMap;
 }
 
 /// Immutable Dart-side detection. Returned by `ZyraEngine.pollDetections()`.
@@ -384,6 +405,7 @@ class ZyraTrack {
     required this.ageFrames,
     required this.confidence,
     required this.heightRatePerS,
+    required this.depthRelative,
   });
 
   final int id;
@@ -399,6 +421,9 @@ class ZyraTrack {
 
   /// Fractional bbox-height expansion rate, in 1/sec. Positive = approaching.
   final double heightRatePerS;
+
+  /// Phase 17 — relative depth (0..1, 0=far, 1=near). 0 when unavailable.
+  final double depthRelative;
 
   double get cx => 0.5 * (x1 + x2);
   double get cy => 0.5 * (y1 + y2);
@@ -433,6 +458,7 @@ class ZyraFcw {
     required this.criticalBboxHFrac,
     required this.criticalDistanceM,
     required this.rangeRateMps,
+    required this.criticalDepth,
   });
 
   final ZyraFcwState state;
@@ -448,6 +474,9 @@ class ZyraFcw {
   /// Phase 10 — closing rate along the sight line, metres/sec.
   /// Positive = closing (range shrinking). 0 when no target / uncalibrated.
   final double rangeRateMps;
+
+  /// Phase 17 — relative depth of the critical target (0..1, 0=far).
+  final double criticalDepth;
 
   bool get isSafe => state == ZyraFcwState.safe;
   bool get isCaution => state == ZyraFcwState.caution;
@@ -528,6 +557,12 @@ class ZyraBatch {
     required this.driveableMask,
     required this.driveableMaskW,
     required this.driveableMaskH,
+    required this.depthInferMs,
+    required this.depthPostMs,
+    required this.hasDepth,
+    required this.depthMap,
+    required this.depthMapW,
+    required this.depthMapH,
   });
 
   final int frameId;
@@ -584,6 +619,16 @@ class ZyraBatch {
   final Uint8List? driveableMask;
   final int driveableMaskW;
   final int driveableMaskH;
+
+  /// Phase 17 — depth estimation timing.
+  final double depthInferMs;
+  final double depthPostMs;
+
+  /// Phase 17 — depth map (80×60, row-major, 0=far, 255=near).
+  final bool hasDepth;
+  final Uint8List? depthMap;
+  final int depthMapW;
+  final int depthMapH;
 
   double get egoSpeedKmh => egoSpeedMps * 3.6;
 

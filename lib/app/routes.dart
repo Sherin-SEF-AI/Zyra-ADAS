@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../features/debug/presentation/engine_debug_screen.dart';
+import '../features/depth/presentation/depth_screen.dart';
 import '../features/drive/presentation/drive_screen.dart';
 import '../features/vehicle_select/presentation/vehicle_select_screen.dart';
 
@@ -16,6 +17,7 @@ class ZyraRoutes {
   static const String vehicleSelect = '/vehicle-select';
   static const String drive = '/drive';
   static const String engineDebug = '/debug/engine';
+  static const String depth = '/depth';
 
   static Route<dynamic>? onGenerateRoute(RouteSettings settings) {
     switch (settings.name) {
@@ -38,6 +40,11 @@ class ZyraRoutes {
         return MaterialPageRoute<void>(
           settings: settings,
           builder: (_) => const EngineDebugScreen(),
+        );
+      case depth:
+        return MaterialPageRoute<void>(
+          settings: settings,
+          builder: (_) => const DepthScreen(),
         );
     }
     return null;

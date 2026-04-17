@@ -42,6 +42,8 @@ struct FcwSnapshot {
   //             +INF when no target; 0 when stationary or uncalibrated.
   float   critical_distance_m;
   float   range_rate_mps;
+  // Phase 17 — depth model relative depth of critical target (0..1).
+  float   critical_depth;
 };
 
 class ForwardCollisionWarning {
@@ -108,6 +110,13 @@ class ForwardCollisionWarning {
   std::unordered_map<int32_t, RangeHistory> ranges_;
   float range_ema_ = 0.50f;        // EMA on instantaneous range per frame
   float rate_ema_  = 0.35f;        // EMA on range rate (heavier smoothing)
+
+  // Phase 17 — per-track depth history for depth-rate TTC.
+  struct DepthHistory {
+    float depth;        // last relative depth (0..1)
+    double last_ts_ms;
+  };
+  std::unordered_map<int32_t, DepthHistory> depth_history_;
 
   // Classes that we warn against. Everything else (traffic_sign,
   // traffic_light, …) is ignored here.

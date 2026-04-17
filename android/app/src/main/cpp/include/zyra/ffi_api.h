@@ -141,6 +141,8 @@ typedef struct ZyraTrack {
   int32_t age_frames;
   float confidence;
   float height_rate_per_s;   // fractional; +ve = approaching camera
+  // Phase 17 — relative depth from monocular depth model (0..1, 0=far).
+  float depth_relative;
 } ZyraTrack;
 
 #define ZYRA_MAX_TRACKS 32
@@ -156,6 +158,8 @@ typedef struct ZyraFcw {
   // target. range_rate_mps is +ve for closing (range shrinking).
   float critical_distance_m;
   float range_rate_mps;
+  // Phase 17 — relative depth of the critical target (0..1, 0=far).
+  float critical_depth;
 } ZyraFcw;
 
 typedef struct ZyraDetectionBatch {
@@ -210,6 +214,14 @@ typedef struct ZyraDetectionBatch {
   int32_t seg_mask_h;          // 45
   int32_t seg_reserved;
   uint8_t seg_driveable_mask[80 * 45];  // 3600 bytes, row-major, 1=driveable
+  // --- Phase 17 depth estimation block ------------------------------------
+  float depth_infer_ms;
+  float depth_post_ms;
+  int32_t depth_valid;
+  int32_t depth_map_w;          // 80
+  int32_t depth_map_h;          // 60
+  int32_t depth_reserved;
+  uint8_t depth_map[80 * 60];   // 4800 bytes, row-major, 0=far 255=near
 } ZyraDetectionBatch;
 
 // Create a new engine. Returns an opaque handle > 0 on success, or 0 on
@@ -238,6 +250,12 @@ ZYRA_API int32_t zyra_engine_load_seg_model(int64_t handle,
                                             const char* param_path,
                                             const char* bin_path,
                                             int32_t use_vulkan);
+
+// Phase 17 — load the Depth Anything V2 monocular depth model.
+// Runs on CPU (Vulkan reserved for YOLO). Same return codes.
+ZYRA_API int32_t zyra_engine_load_depth_model(int64_t handle,
+                                              const char* param_path,
+                                              const char* bin_path);
 
 // Warmup — run a single inference on a synthetic 640² frame to force
 // Vulkan shader compilation / thread-pool init. Recommended once after

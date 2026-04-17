@@ -124,6 +124,15 @@ ZYRA_API int32_t zyra_engine_load_seg_model(int64_t handle,
   return eng->load_seg_model(param_path, bin_path, use_vulkan != 0);
 }
 
+ZYRA_API int32_t zyra_engine_load_depth_model(int64_t handle,
+                                              const char* param_path,
+                                              const char* bin_path) {
+  auto* eng = as_engine(handle);
+  if (eng == nullptr) return -1;
+  if (param_path == nullptr || bin_path == nullptr) return -2;
+  return eng->load_depth_model(param_path, bin_path);
+}
+
 ZYRA_API int32_t zyra_engine_warmup(int64_t handle) {
   auto* eng = as_engine(handle);
   if (eng == nullptr) return -1;

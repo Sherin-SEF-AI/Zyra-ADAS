@@ -17,6 +17,7 @@
 #include <thread>
 #include <vector>
 
+#include "zyra/depth_estimator.h"
 #include "zyra/detector.h"
 #include "zyra/fcw.h"
 #include "zyra/ffi_api.h"  // ZyraDetectionBatch
@@ -49,6 +50,11 @@ class PerceptionEngine {
   int load_seg_model(const std::string& param_path,
                      const std::string& bin_path,
                      bool use_vulkan);
+
+  // Phase 17 — load the Depth Anything V2 monocular depth model.
+  // Returns:  0 ok / -2 null path / -3 load failed.
+  int load_depth_model(const std::string& param_path,
+                       const std::string& bin_path);
 
   // Force-compile Vulkan shaders by running a single synthetic inference.
   // Must be called after load_model. Returns 0 ok / -1 not loaded.
@@ -109,6 +115,7 @@ class PerceptionEngine {
   NcnnYoloV8Detector detector_;
   HoughLaneDetector lane_detector_;   // Deprecated — kept for Lane struct
   RoadSegmentor road_segmentor_;      // Phase 16 — TwinLiteNet
+  DepthEstimator depth_estimator_;    // Phase 17 — Depth Anything V2
   LaneTracker lane_tracker_;
   LaneAssist lane_assist_;
   ObjectTracker object_tracker_;

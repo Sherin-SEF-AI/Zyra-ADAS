@@ -25,6 +25,10 @@ class AssetBootstrap {
   static const String _binAsset = 'assets/models/yolov8s.ncnn.bin';
   static const String _segParamAsset = 'assets/models/twinlitenet.ncnn.param';
   static const String _segBinAsset = 'assets/models/twinlitenet.ncnn.bin';
+  static const String _depthParamAsset =
+      'assets/models/depth_anything_v2_vits.ncnn.param';
+  static const String _depthBinAsset =
+      'assets/models/depth_anything_v2_vits.ncnn.bin';
 
   /// Ensure both model files exist on disk. Safe to call every launch.
   static Future<ModelPaths> ensureModelsExtracted() async {
@@ -57,11 +61,21 @@ class AssetBootstrap {
     await _copyIfStale(_segParamAsset, segParamFile);
     await _copyIfStale(_segBinAsset, segBinFile);
 
+    final File depthParamFile = File(
+        '${modelDir.path}${Platform.pathSeparator}depth_anything_v2_vits.ncnn.param');
+    final File depthBinFile = File(
+        '${modelDir.path}${Platform.pathSeparator}depth_anything_v2_vits.ncnn.bin');
+
+    await _copyIfStale(_depthParamAsset, depthParamFile);
+    await _copyIfStale(_depthBinAsset, depthBinFile);
+
     return ModelPaths(
       paramPath: paramFile.path,
       binPath: binFile.path,
       segParamPath: segParamFile.path,
       segBinPath: segBinFile.path,
+      depthParamPath: depthParamFile.path,
+      depthBinPath: depthBinFile.path,
     );
   }
 
@@ -104,9 +118,13 @@ class ModelPaths {
     required this.binPath,
     required this.segParamPath,
     required this.segBinPath,
+    required this.depthParamPath,
+    required this.depthBinPath,
   });
   final String paramPath;
   final String binPath;
   final String segParamPath;
   final String segBinPath;
+  final String depthParamPath;
+  final String depthBinPath;
 }
