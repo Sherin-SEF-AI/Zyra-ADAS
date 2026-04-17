@@ -61,20 +61,9 @@ class ZyraEngineNotifier extends AsyncNotifier<ZyraEngine> {
         }
       }
 
-      // Depth Anything V2 — runs on CPU (2 threads, parallel with YOLO).
-      try {
-        engine.loadDepthModel(
-          paramPath: paths.depthParamPath,
-          binPath: paths.depthBinPath,
-        );
-        if (kDebugMode) {
-          debugPrint('[Zyra] engine: depth model loaded (CPU)');
-        }
-      } catch (e) {
-        if (kDebugMode) {
-          debugPrint('[Zyra] engine: depth model failed: $e — depth disabled');
-        }
-      }
+      // Depth Anything V2 — NOT loaded at startup. Loaded on-demand when
+      // the user opens the depth screen to avoid CPU contention on the
+      // main drive pipeline.
     } catch (_) {
       engine.dispose();
       rethrow;

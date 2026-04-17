@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/assets/asset_bootstrap.dart';
 import '../../../core/ffi/zyra_detection.dart';
 import '../../../core/ffi/zyra_engine.dart';
 import '../../../core/ffi/zyra_engine_provider.dart';
@@ -31,6 +32,8 @@ class _DepthScreenState extends ConsumerState<DepthScreen> {
   int _frameId = 0;
   DateTime? _lastSubmit;
   double _opacity = 0.75;
+  bool _depthLoaded = false;
+  bool _depthLoading = false;
 
   static const Duration _submitMinInterval = Duration(milliseconds: 50);
 
@@ -44,7 +47,28 @@ class _DepthScreenState extends ConsumerState<DepthScreen> {
       SystemUiMode.immersiveSticky,
       overlays: <SystemUiOverlay>[],
     );
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initCamera());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDepthModel();
+      _initCamera();
+    });
+  }
+
+  Future<void> _loadDepthModel() async {
+    if (_depthLoading || _depthLoaded) return;
+    _depthLoading = true;
+    try {
+      final ZyraEngine engine = await ref.read(zyraEngineProvider.future);
+      final ModelPaths paths = await AssetBootstrap.ensureModelsExtracted();
+      engine.loadDepthModel(
+        paramPath: paths.depthParamPath,
+        binPath: paths.depthBinPath,
+      );
+      if (mounted) setState(() => _depthLoaded = true);
+    } catch (e) {
+      debugPrint('[Zyra] depth model failed to load: $e');
+    } finally {
+      _depthLoading = false;
+    }
   }
 
   @override

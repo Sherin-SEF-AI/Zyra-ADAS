@@ -89,9 +89,9 @@ class ObjectTracker {
 
   // Tuning defaults — chosen on the conservative side; we'd rather drop a
   // flickery detection than hand out unstable IDs.
-  float iou_threshold_ = 0.30f;
+  float iou_threshold_ = 0.25f;   // lowered from 0.30 for jittery cameras
   int   min_hits_      = 3;
-  int   max_missed_    = 8;
+  int   max_missed_    = 12;      // raised from 8 — survives brief occlusions
   float pos_ema_       = 0.55f;   // new-weight on position EMA.
   float rate_ema_      = 0.35f;   // new-weight on height-rate EMA.
 

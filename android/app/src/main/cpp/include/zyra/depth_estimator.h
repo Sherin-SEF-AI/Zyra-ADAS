@@ -54,7 +54,7 @@ class DepthEstimator {
  private:
   ncnn::Net net_;
   bool loaded_ = false;
-  static constexpr int kInputSize = 518;
+  static constexpr int kInputSize = 308;
 
   // Full-resolution depth retained for per-bbox queries.
   cv::Mat full_depth_;   // CV_32FC1, kInputSize x kInputSize

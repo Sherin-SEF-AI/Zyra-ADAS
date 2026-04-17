@@ -48,10 +48,10 @@ const Map<int, String> kCocoIdToZyra = <int, String>{
 ///
 /// Copied from desktop `DEFAULT_CLASS_THRESHOLDS`.
 const Map<String, double> kClassThresholds = <String, double>{
-  'pedestrian': 0.20, // bias for recall — missing a pedestrian is expensive
-  'bicycle': 0.25,
-  'motorcycle': 0.25,
-  'auto_rickshaw': 0.25,
+  'pedestrian': 0.15, // aggressive recall — missing a pedestrian is expensive
+  'bicycle': 0.18,    // small/distant bikes must not be missed
+  'motorcycle': 0.20,
+  'auto_rickshaw': 0.22,
   'car': 0.30,
   'truck': 0.30,
   'bus': 0.30,

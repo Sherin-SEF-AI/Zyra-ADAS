@@ -26,7 +26,7 @@ bool DepthEstimator::load(const std::string& param_path,
 
   ncnn::Option opt;
   opt.use_vulkan_compute = false;  // CPU only — Vulkan reserved for YOLO
-  opt.num_threads = 2;
+  opt.num_threads = 1;             // single thread to avoid starving seg/tracker
   opt.use_fp16_packed = true;
   opt.use_fp16_storage = true;
   opt.use_fp16_arithmetic = true;
@@ -47,7 +47,7 @@ bool DepthEstimator::load(const std::string& param_path,
 
   full_depth_ = cv::Mat::zeros(kInputSize, kInputSize, CV_32FC1);
   loaded_ = true;
-  ZYRA_LOGI("DepthEstimator loaded (CPU, 2 threads)");
+  ZYRA_LOGI("DepthEstimator loaded (CPU, 1 thread, input=%d)", kInputSize);
   return true;
 }
 
@@ -56,8 +56,8 @@ DepthResult DepthEstimator::estimate(const FrameView& frame) {
 
   ++frame_count_;
 
-  // Run inference every 3rd frame — depth changes slowly at driving speeds.
-  if (frame_count_ > 1 && (frame_count_ % 3) != 0) {
+  // Run inference every 5th frame — depth changes slowly at driving speeds.
+  if (frame_count_ > 1 && (frame_count_ % 5) != 0) {
     return cached_result_;
   }
 
