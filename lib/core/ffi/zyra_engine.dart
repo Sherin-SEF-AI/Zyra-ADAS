@@ -93,6 +93,11 @@ typedef _EngineSetVehicleDynamicsC = ffi.Int32 Function(
 typedef _EngineSetVehicleDynamicsD = int Function(
     int, double, double, double, double, double);
 
+typedef _EngineLoadSegModelC = ffi.Int32 Function(
+    ffi.Int64, ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, ffi.Int32);
+typedef _EngineLoadSegModelD = int Function(
+    int, ffi.Pointer<Utf8>, ffi.Pointer<Utf8>, int);
+
 // -----------------------------------------------------------------------------
 
 /// Thin wrapper around the Phase 4 C engine API. Owns an opaque native handle.
@@ -154,7 +159,11 @@ class ZyraEngine {
         _setVehicleDynamics = lib
             .lookup<ffi.NativeFunction<_EngineSetVehicleDynamicsC>>(
                 'zyra_engine_set_vehicle_dynamics')
-            .asFunction<_EngineSetVehicleDynamicsD>() {
+            .asFunction<_EngineSetVehicleDynamicsD>(),
+        _loadSegModel = lib
+            .lookup<ffi.NativeFunction<_EngineLoadSegModelC>>(
+                'zyra_engine_load_seg_model')
+            .asFunction<_EngineLoadSegModelD>() {
     _batchBuffer = allocateBatchBuffer();
   }
 
@@ -184,6 +193,7 @@ class ZyraEngine {
   final _EngineSetCameraGeometryD _setCameraGeometry;
   final _EngineSetEgoStateD _setEgoState;
   final _EngineSetVehicleDynamicsD _setVehicleDynamics;
+  final _EngineLoadSegModelD _loadSegModel;
 
   late final ffi.Pointer<ZyraDetectionBatchStruct> _batchBuffer;
   bool _disposed = false;
@@ -212,6 +222,28 @@ class ZyraEngine {
       if (rc != 0) {
         throw ZyraEngineException(
             'load_model failed (code $rc) for $paramPath / $binPath');
+      }
+    } finally {
+      calloc.free(p);
+      calloc.free(b);
+    }
+  }
+
+  /// Load the TwinLiteNet road segmentation NCNN model. Runs on CPU by
+  /// default (Vulkan reserved for YOLO). See `zyra_engine_load_seg_model`.
+  void loadSegModel({
+    required String paramPath,
+    required String binPath,
+    bool useVulkan = false,
+  }) {
+    _ensureAlive();
+    final ffi.Pointer<Utf8> p = paramPath.toNativeUtf8();
+    final ffi.Pointer<Utf8> b = binPath.toNativeUtf8();
+    try {
+      final int rc = _loadSegModel(handle, p, b, useVulkan ? 1 : 0);
+      if (rc != 0) {
+        throw ZyraEngineException(
+            'load_seg_model failed (code $rc) for $paramPath / $binPath');
       }
     } finally {
       calloc.free(p);
@@ -474,6 +506,15 @@ class ZyraEngine {
       rangeRateMps: fs.rangeRateMps,
     );
 
+    // Extract driveable area mask (3600 bytes) when available.
+    Uint8List? driveableMask;
+    if (b.segHasDriveable != 0) {
+      driveableMask = Uint8List(3600);
+      for (int i = 0; i < 3600; i++) {
+        driveableMask[i] = b.segDriveableMask[i];
+      }
+    }
+
     return ZyraBatch(
       frameId: b.frameId,
       timestampMs: b.timestampMs,
@@ -503,6 +544,12 @@ class ZyraEngine {
         brakeActive: b.shadowBrakeActive != 0,
         steerActive: b.shadowSteerActive != 0,
       ),
+      segInferMs: b.segInferMs,
+      segPostMs: b.segPostMs,
+      hasDriveable: b.segHasDriveable != 0,
+      driveableMask: driveableMask,
+      driveableMaskW: b.segMaskW,
+      driveableMaskH: b.segMaskH,
     );
   }
 

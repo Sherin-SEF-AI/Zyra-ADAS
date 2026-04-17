@@ -202,6 +202,14 @@ typedef struct ZyraDetectionBatch {
   float shadow_steer_rad;
   int32_t shadow_brake_active;
   int32_t shadow_steer_active;
+  // --- Phase 16 road segmentation block ----------------------------------
+  float seg_infer_ms;
+  float seg_post_ms;
+  int32_t seg_has_driveable;
+  int32_t seg_mask_w;          // 80
+  int32_t seg_mask_h;          // 45
+  int32_t seg_reserved;
+  uint8_t seg_driveable_mask[80 * 45];  // 3600 bytes, row-major, 1=driveable
 } ZyraDetectionBatch;
 
 // Create a new engine. Returns an opaque handle > 0 on success, or 0 on
@@ -223,6 +231,13 @@ ZYRA_API int32_t zyra_engine_load_model(int64_t handle,
                                         const char* param_path,
                                         const char* bin_path,
                                         int32_t use_vulkan);
+
+// Phase 16 — load the TwinLiteNet road segmentation model.
+// Same return codes as zyra_engine_load_model.
+ZYRA_API int32_t zyra_engine_load_seg_model(int64_t handle,
+                                            const char* param_path,
+                                            const char* bin_path,
+                                            int32_t use_vulkan);
 
 // Warmup — run a single inference on a synthetic 640² frame to force
 // Vulkan shader compilation / thread-pool init. Recommended once after

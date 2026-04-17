@@ -23,6 +23,7 @@ import '../../vehicle_select/application/vehicle_profile_notifier.dart';
 import '../../vehicle_select/data/vehicle_profile.dart';
 import 'widgets/advanced_lane_overlay_painter.dart';
 import 'widgets/detection_overlay_painter.dart';
+import 'widgets/driveable_area_overlay_painter.dart';
 import 'widgets/fcw_banner.dart';
 import 'widgets/fps_bar.dart';
 import 'widgets/lane_assist_hud.dart';
@@ -642,9 +643,19 @@ class _LiveView extends StatelessWidget {
                 fit: StackFit.expand,
                 children: <Widget>[
                   CameraPreview(c),
+                  // Phase 16 — driveable area green polygon.
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: DriveableAreaOverlayPainter(
+                        batch: latest,
+                        sensorWidth: preview.width,
+                        sensorHeight: preview.height,
+                        sensorOrientation: effectiveSensorOrientation,
+                        mirror: isFront,
+                      ),
+                    ),
+                  ),
                   // Phase 7 — smoothed polynomial lane curves + drift wedge.
-                  // Raw Hough segments removed (redundant with tracker curves
-                  // and cost an extra paint pass).
                   Positioned.fill(
                     child: CustomPaint(
                       painter: AdvancedLaneOverlayPainter(

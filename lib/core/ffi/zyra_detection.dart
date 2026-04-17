@@ -1,4 +1,5 @@
 import 'dart:ffi' as ffi;
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart' show calloc;
 
@@ -216,6 +217,21 @@ final class ZyraDetectionBatchStruct extends ffi.Struct {
   external int shadowBrakeActive;
   @ffi.Int32()
   external int shadowSteerActive;
+  // Phase 16 — road segmentation block.
+  @ffi.Float()
+  external double segInferMs;
+  @ffi.Float()
+  external double segPostMs;
+  @ffi.Int32()
+  external int segHasDriveable;
+  @ffi.Int32()
+  external int segMaskW;
+  @ffi.Int32()
+  external int segMaskH;
+  @ffi.Int32()
+  external int segReserved;
+  @ffi.Array(3600)
+  external ffi.Array<ffi.Uint8> segDriveableMask;
 }
 
 /// Immutable Dart-side detection. Returned by `ZyraEngine.pollDetections()`.
@@ -506,6 +522,12 @@ class ZyraBatch {
     required this.egoPitchDeg,
     required this.egoYawRateDegS,
     required this.shadowPlan,
+    required this.segInferMs,
+    required this.segPostMs,
+    required this.hasDriveable,
+    required this.driveableMask,
+    required this.driveableMaskW,
+    required this.driveableMaskH,
   });
 
   final int frameId;
@@ -552,6 +574,16 @@ class ZyraBatch {
 
   /// Phase 15 — shadow-mode L2 plan for this frame.
   final ZyraShadowPlan shadowPlan;
+
+  /// Phase 16 — road segmentation timing.
+  final double segInferMs;
+  final double segPostMs;
+
+  /// Phase 16 — driveable area mask (80×45, row-major, 1=driveable).
+  final bool hasDriveable;
+  final Uint8List? driveableMask;
+  final int driveableMaskW;
+  final int driveableMaskH;
 
   double get egoSpeedKmh => egoSpeedMps * 3.6;
 

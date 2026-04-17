@@ -23,6 +23,8 @@ class AssetBootstrap {
 
   static const String _paramAsset = 'assets/models/yolov8s.ncnn.param';
   static const String _binAsset = 'assets/models/yolov8s.ncnn.bin';
+  static const String _segParamAsset = 'assets/models/twinlitenet.ncnn.param';
+  static const String _segBinAsset = 'assets/models/twinlitenet.ncnn.bin';
 
   /// Ensure both model files exist on disk. Safe to call every launch.
   static Future<ModelPaths> ensureModelsExtracted() async {
@@ -47,7 +49,20 @@ class AssetBootstrap {
     await _copyIfStale(_paramAsset, paramFile);
     await _copyIfStale(_binAsset, binFile);
 
-    return ModelPaths(paramPath: paramFile.path, binPath: binFile.path);
+    final File segParamFile = File(
+        '${modelDir.path}${Platform.pathSeparator}twinlitenet.ncnn.param');
+    final File segBinFile = File(
+        '${modelDir.path}${Platform.pathSeparator}twinlitenet.ncnn.bin');
+
+    await _copyIfStale(_segParamAsset, segParamFile);
+    await _copyIfStale(_segBinAsset, segBinFile);
+
+    return ModelPaths(
+      paramPath: paramFile.path,
+      binPath: binFile.path,
+      segParamPath: segParamFile.path,
+      segBinPath: segBinFile.path,
+    );
   }
 
   static Future<void> _tryDelete(File f) async {
@@ -82,9 +97,16 @@ class AssetBootstrap {
   }
 }
 
-/// Absolute filesystem paths for the extracted NCNN model.
+/// Absolute filesystem paths for the extracted NCNN models.
 class ModelPaths {
-  const ModelPaths({required this.paramPath, required this.binPath});
+  const ModelPaths({
+    required this.paramPath,
+    required this.binPath,
+    required this.segParamPath,
+    required this.segBinPath,
+  });
   final String paramPath;
   final String binPath;
+  final String segParamPath;
+  final String segBinPath;
 }

@@ -51,6 +51,14 @@ int PerceptionEngine::load_model(const std::string& param_path,
   return 0;
 }
 
+int PerceptionEngine::load_seg_model(const std::string& param_path,
+                                     const std::string& bin_path,
+                                     bool use_vulkan) {
+  if (param_path.empty() || bin_path.empty()) return -2;
+  if (!road_segmentor_.load(param_path, bin_path, use_vulkan)) return -3;
+  return 0;
+}
+
 int PerceptionEngine::warmup() {
   if (!loaded_.load(std::memory_order_acquire)) return -1;
   std::vector<uint8_t> grey(640 * 640 * 3, 114);
@@ -244,17 +252,28 @@ void PerceptionEngine::worker_loop_() {
       continue;
     }
 
-    // --- Run lane detection on the (unrotated) Y plane. ------------------
-    // Uses the contiguous y_buf copy we made in submit(), so row_stride is
-    // exactly width here.
+    // --- Phase 16: run road segmentation (TwinLiteNet) instead of Hough. -
+    RoadSegResult seg;
     std::vector<Lane> lanes;
-    try {
-      lanes = lane_detector_.detect(p.y_buf.data(), p.width, p.height,
-                                    p.width);
-    } catch (...) {
-      ZYRA_LOGE("lane detector threw — emitting empty lanes for frame %llu",
-                static_cast<unsigned long long>(p.frame_id));
-      lanes.clear();
+    if (road_segmentor_.loaded()) {
+      try {
+        seg = road_segmentor_.segment(fv);
+        lanes = std::move(seg.synthetic_lanes);
+      } catch (...) {
+        ZYRA_LOGE("road segmentor threw — emitting empty lanes for frame %llu",
+                  static_cast<unsigned long long>(p.frame_id));
+        lanes.clear();
+      }
+    } else {
+      // Fallback to classical Hough if seg model not loaded.
+      try {
+        lanes = lane_detector_.detect(p.y_buf.data(), p.width, p.height,
+                                      p.width);
+      } catch (...) {
+        ZYRA_LOGE("lane detector threw — emitting empty lanes for frame %llu",
+                  static_cast<unsigned long long>(p.frame_id));
+        lanes.clear();
+      }
     }
 
     // --- Snapshot IPM under the lock so stages work off a consistent
@@ -410,6 +429,17 @@ void PerceptionEngine::worker_loop_() {
     batch.shadow_steer_rad = sp.steer_rad;
     batch.shadow_brake_active = sp.brake_active;
     batch.shadow_steer_active = sp.steer_active;
+
+    // Phase 16 — road segmentation mask.
+    batch.seg_infer_ms = seg.inference_ms;
+    batch.seg_post_ms = seg.postprocess_ms;
+    batch.seg_has_driveable = seg.has_driveable ? 1 : 0;
+    batch.seg_mask_w = seg.mask_w;
+    batch.seg_mask_h = seg.mask_h;
+    if (seg.has_driveable) {
+      std::memcpy(batch.seg_driveable_mask, seg.driveable_mask,
+                  sizeof(seg.driveable_mask));
+    }
 
     {
       std::lock_guard<std::mutex> lk(result_mu_);

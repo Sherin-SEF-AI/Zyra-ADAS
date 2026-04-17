@@ -55,6 +55,8 @@ flutter:
   assets:
     - assets/models/yolov8s.ncnn.param
     - assets/models/yolov8s.ncnn.bin
+    - assets/models/twinlitenet.ncnn.param
+    - assets/models/twinlitenet.ncnn.bin
     - assets/audio/fcw_warn.wav
     - assets/audio/fcw_alert.wav
     - assets/audio/ldw_alert.wav

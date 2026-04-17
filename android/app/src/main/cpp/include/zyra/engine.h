@@ -25,6 +25,7 @@
 #include "zyra/lane_assist.h"
 #include "zyra/lane_tracker.h"
 #include "zyra/object_tracker.h"
+#include "zyra/road_seg.h"
 #include "zyra/shadow_planner.h"
 
 namespace zyra {
@@ -37,11 +38,17 @@ class PerceptionEngine {
   PerceptionEngine(const PerceptionEngine&) = delete;
   PerceptionEngine& operator=(const PerceptionEngine&) = delete;
 
-  // Load the NCNN model. Starts the worker thread on first successful call.
+  // Load the NCNN YOLO model. Starts the worker thread on first successful call.
   // Returns:  0 ok / -2 null path / -3 load failed.
   int load_model(const std::string& param_path,
                  const std::string& bin_path,
                  bool use_vulkan);
+
+  // Phase 16 — load the TwinLiteNet road segmentation model.
+  // Returns:  0 ok / -2 null path / -3 load failed.
+  int load_seg_model(const std::string& param_path,
+                     const std::string& bin_path,
+                     bool use_vulkan);
 
   // Force-compile Vulkan shaders by running a single synthetic inference.
   // Must be called after load_model. Returns 0 ok / -1 not loaded.
@@ -100,7 +107,8 @@ class PerceptionEngine {
   void worker_loop_();
 
   NcnnYoloV8Detector detector_;
-  HoughLaneDetector lane_detector_;
+  HoughLaneDetector lane_detector_;   // Deprecated — kept for Lane struct
+  RoadSegmentor road_segmentor_;      // Phase 16 — TwinLiteNet
   LaneTracker lane_tracker_;
   LaneAssist lane_assist_;
   ObjectTracker object_tracker_;

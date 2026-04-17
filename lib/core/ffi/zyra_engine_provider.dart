@@ -45,6 +45,21 @@ class ZyraEngineNotifier extends AsyncNotifier<ZyraEngine> {
         useVulkan: true,
       );
       engine.warmup();
+
+      // TwinLiteNet road segmentation — runs on CPU (Vulkan reserved for YOLO).
+      try {
+        engine.loadSegModel(
+          paramPath: paths.segParamPath,
+          binPath: paths.segBinPath,
+        );
+        if (kDebugMode) {
+          debugPrint('[Zyra] engine: seg model loaded (CPU)');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[Zyra] engine: seg model failed: $e — lane fallback');
+        }
+      }
     } catch (_) {
       engine.dispose();
       rethrow;
