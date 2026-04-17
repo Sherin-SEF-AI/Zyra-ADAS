@@ -10,7 +10,9 @@
 // mask edges are converted to synthetic Lane segments that feed the
 // existing LaneTracker pipeline unchanged.
 //
-// Cost: ~5-10 ms on CPU at 256x256 input, runs sequentially after YOLO.
+// Accuracy: confidence-weighted argmax, lane line mask reinforcement,
+//           largest connected component, temporal EMA smoothing.
+// Performance: runs every other frame, reuses previous result on skips.
 
 #pragma once
 
@@ -52,6 +54,7 @@ class RoadSegmentor {
 
   // Run segmentation on a camera frame. Produces a downsampled driveable
   // area mask and synthetic Lane segments for the LaneTracker.
+  // Internally runs every other call, returning the cached result on skips.
   RoadSegResult segment(const FrameView& frame);
 
  private:
@@ -59,13 +62,30 @@ class RoadSegmentor {
   bool loaded_ = false;
   bool vulkan_active_ = false;
   static constexpr int kInputSize = 256;
+  static constexpr int kInputPixels = kInputSize * kInputSize;
 
   // Reusable buffers to avoid per-frame heap churn.
-  cv::Mat rgb_buf_;
   cv::Mat resized_buf_;
+  cv::Mat da_mask_buf_;           // 256x256 CV_8UC1
+  cv::Mat ll_mask_buf_;           // 256x256 CV_8UC1 lane lines
+  cv::Mat morph_kernel_open_;     // pre-allocated 3x3 ellipse
+  cv::Mat morph_kernel_close_;    // pre-allocated 5x5 ellipse
+  cv::Mat ema_mask_;              // temporal EMA accumulator (CV_32FC1)
+  bool ema_initialized_ = false;
+
+  // Frame-skip: run inference every other frame, reuse cached result.
+  uint64_t frame_count_ = 0;
+  RoadSegResult cached_result_;
+
+  // Run the actual NCNN inference + post-processing.
+  RoadSegResult run_inference_(const FrameView& frame);
+
+  // Extract the largest connected component from the binary mask.
+  void keep_largest_component_(cv::Mat& mask);
 
   // Extract left/right boundary polylines from the driveable area mask
   // and convert to synthetic Lane segments in original frame coordinates.
+  // Scans from center outward for more robust boundary detection.
   void extract_boundaries_(const cv::Mat& da_mask_256, int orig_w, int orig_h,
                            std::vector<Lane>& out_lanes);
 

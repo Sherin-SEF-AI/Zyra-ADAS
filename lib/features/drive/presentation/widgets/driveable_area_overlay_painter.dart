@@ -9,7 +9,8 @@ import '../../../../core/ffi/zyra_detection.dart';
 //
 // Rendering: scan each row of the mask to find leftmost and rightmost
 // driveable columns, build a closed Path from left boundary (top-to-bottom)
-// + right boundary (bottom-to-top), then fill with translucent green.
+// + right boundary (bottom-to-top), then fill with gradient green.
+// Boundary edges are drawn with a subtle bright border for visibility.
 class DriveableAreaOverlayPainter extends CustomPainter {
   DriveableAreaOverlayPainter({
     required this.batch,
@@ -27,7 +28,18 @@ class DriveableAreaOverlayPainter extends CustomPainter {
 
   static final Paint _fill = Paint()
     ..style = PaintingStyle.fill
-    ..color = const Color(0x4000FF00);
+    ..color = const Color(0x3500E676);
+
+  static final Paint _edge = Paint()
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 2.0
+    ..color = const Color(0x9900E676);
+
+  // Cached boundary lists to reduce per-frame allocation.
+  static final List<double> _lx = <double>[];
+  static final List<double> _ly = <double>[];
+  static final List<double> _rx = <double>[];
+  static final List<double> _ry = <double>[];
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -39,12 +51,10 @@ class DriveableAreaOverlayPainter extends CustomPainter {
     final int mh = b.driveableMaskH;
     if (mask.length != mw * mh) return;
 
-    // Scan rows to find left/right boundaries of driveable area.
-    final List<double> leftX = <double>[];
-    final List<double> leftY = <double>[];
-    final List<double> rightX = <double>[];
-    final List<double> rightY = <double>[];
+    // Reuse static lists to avoid allocation.
+    _lx.clear(); _ly.clear(); _rx.clear(); _ry.clear();
 
+    // Scan rows to find left/right boundaries of driveable area.
     for (int row = 0; row < mh; row++) {
       final int rowOff = row * mw;
       int first = -1;
@@ -56,36 +66,32 @@ class DriveableAreaOverlayPainter extends CustomPainter {
         }
       }
       if (first >= 0) {
-        // Map mask coords to original sensor image space.
         final double sx = first / mw * sensorWidth;
         final double ex = (last + 1) / mw * sensorWidth;
         final double y = (row + 0.5) / mh * sensorHeight;
-        leftX.add(sx);
-        leftY.add(y);
-        rightX.add(ex);
-        rightY.add(y);
+        _lx.add(sx); _ly.add(y);
+        _rx.add(ex); _ry.add(y);
       }
     }
 
-    if (leftX.length < 2) return;
+    if (_lx.length < 2) return;
 
-    // Build closed path in sensor space: left boundary top→bottom,
-    // then right boundary bottom→top.
+    // Build closed path in sensor space.
     final Path sensorPath = Path();
-    sensorPath.moveTo(leftX[0], leftY[0]);
-    for (int i = 1; i < leftX.length; i++) {
-      sensorPath.lineTo(leftX[i], leftY[i]);
+    sensorPath.moveTo(_lx[0], _ly[0]);
+    for (int i = 1; i < _lx.length; i++) {
+      sensorPath.lineTo(_lx[i], _ly[i]);
     }
-    for (int i = rightX.length - 1; i >= 0; i--) {
-      sensorPath.lineTo(rightX[i], rightY[i]);
+    for (int i = _rx.length - 1; i >= 0; i--) {
+      sensorPath.lineTo(_rx[i], _ry[i]);
     }
     sensorPath.close();
 
-    // Transform sensor-space path to display space (same rotation logic
-    // as DetectionOverlayPainter._mapRectToDisplay).
-    final Path displayPath =
-        _transformPath(sensorPath, size);
+    final Path displayPath = _transformPath(sensorPath, size);
+
+    // Draw filled area then edge border for visibility.
     canvas.drawPath(displayPath, _fill);
+    canvas.drawPath(displayPath, _edge);
   }
 
   Path _transformPath(Path sensorPath, Size size) {
@@ -101,7 +107,6 @@ class DriveableAreaOverlayPainter extends CustomPainter {
       case 90:
         dw = sh;
         dh = sw;
-        // (x,y) → (sh - y, x)
         m.setEntry(0, 0, 0);
         m.setEntry(0, 1, -1);
         m.setEntry(0, 3, sh);
@@ -117,7 +122,6 @@ class DriveableAreaOverlayPainter extends CustomPainter {
       case 270:
         dw = sh;
         dh = sw;
-        // (x,y) → (y, sw - x)
         m.setEntry(0, 0, 0);
         m.setEntry(0, 1, 1);
         m.setEntry(1, 0, -1);
@@ -129,14 +133,12 @@ class DriveableAreaOverlayPainter extends CustomPainter {
     }
 
     if (mirror) {
-      // Flip horizontally in rotated space.
       final Matrix4 flip = Matrix4.identity();
       flip.setEntry(0, 0, -1);
       flip.setEntry(0, 3, dw);
       m.multiply(flip);
     }
 
-    // Scale from rotated-sensor coords to display (widget) coords.
     final double sx = size.width / dw;
     final double sy = size.height / dh;
     final Matrix4 scale = Matrix4.identity();

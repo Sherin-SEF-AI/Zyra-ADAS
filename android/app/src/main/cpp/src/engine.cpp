@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <future>
 #include <vector>
 
 #include "zyra/detection.h"
@@ -242,22 +243,33 @@ void PerceptionEngine::worker_loop_() {
       fv.v = p.uv_buf.data() + plane;
     }
 
-    // --- Run detection (unlocked). ---------------------------------------
+    // --- Run YOLO detection + road segmentation in PARALLEL. ---------------
+    // YOLO runs on Vulkan GPU; TwinLiteNet runs on CPU threads.
+    // They don't compete for the same compute resources, so overlapping
+    // them effectively hides the seg latency.
     std::vector<Detection> dets;
-    try {
-      dets = detector_.detect(fv);
-    } catch (...) {
-      ZYRA_LOGE("detector threw — dropping frame %llu",
-                static_cast<unsigned long long>(p.frame_id));
-      continue;
-    }
-
-    // --- Phase 16: run road segmentation (TwinLiteNet) instead of Hough. -
     RoadSegResult seg;
     std::vector<Lane> lanes;
+
     if (road_segmentor_.loaded()) {
+      // Launch seg on a background thread (CPU) while YOLO runs on GPU.
+      auto seg_future = std::async(std::launch::async, [this, &fv]() {
+        return road_segmentor_.segment(fv);
+      });
+
+      // YOLO detection on the main worker thread (Vulkan GPU).
       try {
-        seg = road_segmentor_.segment(fv);
+        dets = detector_.detect(fv);
+      } catch (...) {
+        ZYRA_LOGE("detector threw — dropping frame %llu",
+                  static_cast<unsigned long long>(p.frame_id));
+        seg_future.wait();  // don't leak the async
+        continue;
+      }
+
+      // Collect seg result (should already be done or nearly done).
+      try {
+        seg = seg_future.get();
         lanes = std::move(seg.synthetic_lanes);
       } catch (...) {
         ZYRA_LOGE("road segmentor threw — emitting empty lanes for frame %llu",
@@ -265,7 +277,14 @@ void PerceptionEngine::worker_loop_() {
         lanes.clear();
       }
     } else {
-      // Fallback to classical Hough if seg model not loaded.
+      // No seg model — sequential YOLO then Hough fallback.
+      try {
+        dets = detector_.detect(fv);
+      } catch (...) {
+        ZYRA_LOGE("detector threw — dropping frame %llu",
+                  static_cast<unsigned long long>(p.frame_id));
+        continue;
+      }
       try {
         lanes = lane_detector_.detect(p.y_buf.data(), p.width, p.height,
                                       p.width);

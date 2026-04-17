@@ -199,6 +199,10 @@ class ZyraEngine {
   bool _disposed = false;
   int _lastDrainedFrameId = -1;
 
+  // Reusable mask buffer to avoid GC pressure from allocating 3600 bytes
+  // every frame. Only reallocated if the mask size changes.
+  Uint8List? _maskBuf;
+
   /// Release the underlying native engine + scratch buffer.
   void dispose() {
     if (_disposed) return;
@@ -507,12 +511,17 @@ class ZyraEngine {
     );
 
     // Extract driveable area mask (3600 bytes) when available.
+    // Reuses a cached buffer to avoid per-frame allocation / GC pressure.
     Uint8List? driveableMask;
     if (b.segHasDriveable != 0) {
-      driveableMask = Uint8List(3600);
-      for (int i = 0; i < 3600; i++) {
-        driveableMask[i] = b.segDriveableMask[i];
+      const int maskSize = 3600;
+      if (_maskBuf == null || _maskBuf!.length != maskSize) {
+        _maskBuf = Uint8List(maskSize);
       }
+      for (int i = 0; i < maskSize; i++) {
+        _maskBuf![i] = b.segDriveableMask[i];
+      }
+      driveableMask = _maskBuf;
     }
 
     return ZyraBatch(
